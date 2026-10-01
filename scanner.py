@@ -1,9 +1,14 @@
 """
 scanner.py - live Agent Confluence scanner (run by GitHub Actions every 5 min).
-Signals use the same engine as the backtest, so alerts and backtest always agree:
-  - 5m flip while the 15m regime agrees (15m flip within MAX_AGE candles), or
-  - 15m flip while the 5m regime already agrees.
-No daily trade limit and no square-off: while a signal's trade is still running (SL/TP1 not hit) no overlapping signal is sent.
+Signals use the same engine as the backtest, so alerts and backtest always agree.
+
+Default (HTF_TRIGGER=false): only **5m RF flip** when the 15m HTF regime is already
+aligned and the HTF flip is recent (htf_age ≤ MAX_AGE, default 2). The 15m-flip
+trigger (15m flips while 5m already aligned) is OFF for live scanning; set
+HTF_TRIGGER=true to re-enable it.
+
+No daily trade limit and no square-off: while a signal's trade is still running
+(SL/TP1 not hit) no overlapping signal is sent.
 """
 from __future__ import annotations
 

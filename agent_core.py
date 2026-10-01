@@ -66,7 +66,7 @@ class Params:
     rr1: float = 0.8             # sole target RR (full size)
     risk_pct: float = 1.0        # risk per trade, % of equity
     one_trade_day: bool = False  # no daily limit; a running trade simply continues (no overlap)
-    htf_trigger: bool = True     # also signal when the HTF flips and the chart TF is already aligned
+    htf_trigger: bool = False    # OFF by default: live scanner only fires on 5m RF flip when HTF already aligned (htf_age ≤ MAX_AGE). Set HTF_TRIGGER=true to also signal when HTF flips and chart TF is already aligned
     eod_exit: bool = False       # False = no square-off, the trade runs until SL / TP1
     allow_long: bool = True
     allow_short: bool = True
@@ -487,8 +487,10 @@ def format_signal(sym: str, side: int, ts: pd.Timestamp, entry: float, sl: float
     if not p.use_htf:
         why = f"{p.base_min}m flip • HTF filter off"
     elif entry_type == "15m flip":
+        # Only when HTF_TRIGGER=true (disabled by default on live scanner)
         why = f"{p.htf_min}m flip • {p.base_min}m already aligned ✓"
     else:
+        # Default live path: 5m RF flip with HTF (15m) already aligned (htf_age ≤ MAX_AGE)
         why = f"{p.base_min}m flip • {p.htf_min}m aligned ✓"
     f = lambda v: f"{v:,.2f}"  # noqa: E731
     return (

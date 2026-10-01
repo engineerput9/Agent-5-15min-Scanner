@@ -107,8 +107,8 @@ jobs:
           # CAPITAL: "100000"       # used for the quantity shown in alerts + EOD PnL
           # RISK_PCT: "1.0"
           # RR1: "0.8"              # sole target RR (full size to TP1; no TP2)
-          # MAX_AGE: "2"            # 15m flip must be within this many 15m candles (0 = any age)
-          # HTF_TRIGGER: "true"     # also signal when 15m flips and 5m is already aligned
+          # MAX_AGE: "2"            # for 5m confluence: HTF flip age ≤ this many 15m candles (0 = any)
+          # HTF_TRIGGER: "false"    # default OFF — only 5m RF flip when 15m already aligned; set "true" to also alert on 15m flip
           # ONE_TRADE_DAY: "false"  # default: no daily limit
           # EOD_EXIT: "false"       # default: no square-off, trades run until SL / TP1
           # INCLUDE_COMMODITIES: "true"  # also scan commodities.txt (Yahoo futures proxies)

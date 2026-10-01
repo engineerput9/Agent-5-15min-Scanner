@@ -4,14 +4,13 @@ Live Telegram alerts + backtest, run free on GitHub Actions.
 Python port of your Pine strategy **"Agent Confluence Backtest"**.
 
 ## What it does
-- **Signal (either way, both timeframes must agree):**
-  1. **5m flip**: the 5m Range Filter flips on a closed candle while the 15m regime agrees and the 15m flipped recently (within `MAX_AGE` 15m candles, default 2).
-  2. **15m flip**: the 15m flips and the 5m regime already points the same way. The alert comes on the first 5m candle after that 15m candle closes.
+- **Live signal (default):** only **5m flip with 15m aligned** — the 5m Range Filter flips on a closed candle while the 15m HTF regime already agrees and the 15m flipped recently (`htf_age` ≤ `MAX_AGE`, default 2). Telegram wording: *5m flip • 15m aligned ✓*.
+- **15m-flip trigger is OFF by default** (`HTF_TRIGGER=false`). That path (15m flips while 5m already aligned) is still in the engine for backtests / optional use; re-enable with `HTF_TRIGGER=true` in the workflow env (or Pine input). When enabled, Telegram says *15m flip • 5m already aligned ✓*.
 - **Levels** (same as Pine): SL = swing low/high of last 10 candles, or 1×ATR if that is tighter. **TP1 = 0.8R (sole target, full size)** — no TP2.
 - **No daily limit, no square-off**: a symbol can signal any number of times, and a trade runs (also overnight) until SL or TP1. A new signal for the same symbol is not sent while its previous trade is still running.
 - **Rules**: signals only on closed candles. No end-of-day square-off: a trade runs (even overnight) until SL or TP1 is hit; **full size books at TP1**.
-- **Alert**: Entry, SL, TP1, risk-based quantity and which of the two triggers fired.
-- **EOD summary**: after close each trading day, one Telegram message with that day's signal count, win rate, and PnL (same SL/TP fill model as the backtest).
+- **Alert**: Entry, SL, TP1, risk-based quantity and why it fired (5m flip with HTF aligned by default).
+- **EOD summary**: after close each trading day, one Telegram message with that day's signal count, win rate, and PnL (same SL/TP fill model as the backtest). Still splits by trigger type if any 15m-flip alerts remain in history or if you re-enable `HTF_TRIGGER`.
 - **Backtest**: same engine as the scanner. Full-size exit at TP1, shared SL, optional EOD exit, commission, slippage, intrabar fill model, gap fills.
 
 ## Files
@@ -52,7 +51,7 @@ Python port of your Pine strategy **"Agent Confluence Backtest"**.
 ## End-of-day (EOD) Telegram summary
 Every Mon–Fri after the MCX evening window (~23:40 IST; or right after the last evening loop) the bot posts one message covering **that calendar day only**:
 - **Signals sent** – count of alerts in `state.json` for today (equities **and** commodities when `INCLUDE_COMMODITIES` is on)
-- **Win rate / PnL** – **overall** plus **by trigger** (5m flip / 15m flip): count, W/L, win rate %, net PnL
+- **Win rate / PnL** – **overall** plus **by trigger** (5m flip / 15m flip when present): count, W/L, win rate %, net PnL. With default `HTF_TRIGGER=false`, live days are 5m-flip only.
 - **Equities vs MCX** – separate sections: 📈 Equities and 🛢️ MCX / Commodities, each with its own stats and winners/losers. Commodity lines use MCX-style names (`GOLD`, `SILVER`, `CRUDEOIL`, `COPPER`, `NATURALGAS`), not Yahoo tickers like `GC=F`
 - **Trigger storage** – `state.json` records `entry_type` (and side) when each alert is sent so EOD does not depend only on re-sim
 
@@ -119,7 +118,7 @@ Enable in the scanner with `INCLUDE_COMMODITIES=true` (merges `commodities.txt`)
 | Chart TF (min) | `BASE_MIN` | `--base-min` | 5 |
 | Confirmation TF (min) | `HTF_MIN` | `--htf-min` | 15 |
 | Max age of HTF flip (HTF candles) | `MAX_AGE` | `--max-age` | 2 (0 = any) |
-| 15m flip + 5m already aligned trigger | `HTF_TRIGGER` | `--no-htf-trigger` | on |
+| 15m flip + 5m already aligned trigger | `HTF_TRIGGER` | `--no-htf-trigger` | **off** (live default; set `HTF_TRIGGER=true` to re-enable) |
 | Swing lookback / ATR length / ATR mult | `SWING_LOOKBACK`, `ATR_LENGTH`, `ATR_MULT` | same | 10 / 14 / 1.0 |
 | Target 1 RR (sole target, full size) | `RR1` | `--rr1` | 0.8 |
 | Include commodities.txt | `INCLUDE_COMMODITIES` | — | off |
@@ -130,6 +129,8 @@ Enable in the scanner with `INCLUDE_COMMODITIES=true` (merges `commodities.txt`)
 | Longs / shorts | `ALLOW_LONG`, `ALLOW_SHORT` | `--long-only`, `--short-only` | both |
 
 To use a 15m chart with 60m confirmation: `BASE_MIN=15`, `HTF_MIN=60` (or run the workflow manually with those inputs).
+
+**Re-enable the 15m-flip trigger:** uncomment / set `HTF_TRIGGER: "true"` under the scanner job env in `.github/workflows/scanner.yml` (or export `HTF_TRIGGER=true` locally). Backtest: omit `--no-htf-trigger` and set `HTF_TRIGGER=true` (default Params is off). Pine: turn on *Also signal when HTF flips…*.
 
 ## Backtest options (`extra_args` box or command line)
 - `--compare` : HTF off vs on vs max-age ≤1/2/4, with and without the 15m-flip trigger, and with a one-trade-a-day limit
