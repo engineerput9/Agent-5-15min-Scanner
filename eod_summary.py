@@ -140,6 +140,18 @@ def backfill_entry_types(state: dict, trades: list[dict]) -> int:
 
 
 
+
+def _asset_class(sym: str) -> str:
+    """Equity/index vs commodity futures proxy (Yahoo =F / known NAMES)."""
+    s = str(sym)
+    if s.endswith("=F") or s in (
+        "GC=F", "SI=F", "CL=F", "NG=F", "HG=F", "BZ=F", "PL=F", "PA=F",
+        "MGC=F", "SIL=F", "QM=F", "QG=F",
+    ):
+        return "commodity"
+    return "equity"
+
+
 def _is_open_trade(t: dict) -> bool:
     o = str(t.get("outcome", "")).upper()
     return "OPEN" in o or "STILL OPEN" in o
@@ -222,6 +234,12 @@ def format_eod(today: str, trades: list[dict], p: Params, capital: float, bt: BT
         f"Signals: <b>{n}</b>  •  priced: <b>{len(priced)}</b>"
         + (f"  •  open/MTM: {len(openish)}" if openish else ""),
     ]
+    eq = [t for t in trades if _asset_class(t.get("symbol", "")) == "equity"]
+    co = [t for t in trades if _asset_class(t.get("symbol", "")) == "commodity"]
+    if eq or co:
+        lines.append(
+            f"Universe: equities <b>{len(eq)}</b>  •  commodities <b>{len(co)}</b>"
+        )
     if priced:
         lines += [
             f"Overall: <b>{wr:.1f}%</b>  ({len(wins)}W / {len(losses)}L)  •  "

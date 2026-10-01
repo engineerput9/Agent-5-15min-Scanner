@@ -51,7 +51,7 @@ Python port of your Pine strategy **"Agent Confluence Backtest"**.
 
 ## End-of-day (EOD) Telegram summary
 Every Mon–Fri after the MCX evening window (~23:40 IST; or right after the last evening loop) the bot posts one message covering **that calendar day only**:
-- **Signals sent** – count of alerts in `state.json` for today
+- **Signals sent** – count of alerts in `state.json` for today (equities **and** commodities when `INCLUDE_COMMODITIES` is on; EOD lists both)
 - **Win rate / PnL** – overall, plus split by trigger: **5m flip** (15m already aligned) and **15m flip** (5m already aligned), each with count, W/L, win rate %, and net PnL
 - **Winners / losers** – per-trade list (entry time, side, symbol, PnL, R, outcome); if the day is busy, top winners and worst losers are shown and the rest are counted
 - **Trigger storage** – `state.json` records `entry_type` (and side) when each alert is sent so EOD does not depend only on re-sim
@@ -67,13 +67,17 @@ With `INCLUDE_COMMODITIES=true`, session end is 23:30, so the afternoon loop (un
 ## Reliable 5-minute scans (important)
 GitHub's built-in schedule is best-effort: runs are often delayed by 10-30+ minutes or skipped entirely, which looks like "alerts only when I run it manually". Fix: let a free external timer trigger the workflow at exact times.
 
-1. **GitHub token**: GitHub → profile photo → *Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token*. Repository access: *Only select repositories → Agent-Scanner*. Permissions → *Repository permissions → Actions: Read and write*. Generate and copy the token (set the longest expiry, note the date).
+1. **GitHub token**: GitHub → profile photo → *Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token*. Repository access: *Only select repositories → Agent-5-15min-Scanner*. Permissions → *Repository permissions → Actions: Read and write*. Generate and copy the token (set the longest expiry, note the date).
 2. **cron-job.org**: create a free account → *Create cronjob*.
-   - URL: `https://api.github.com/repos/YOUR_USERNAME/Agent-Scanner/actions/workflows/scanner.yml/dispatches`
+   - URL: `https://api.github.com/repos/engineerput9/Agent-5-15min-Scanner/actions/workflows/scanner.yml/dispatches`
    - Schedule: *Custom* → time zone **Asia/Kolkata**; Days of week Mon–Fri; Hours 9–15; Minutes `1,6,11,16,21,26,31,36,41,46,51,56` (one minute after each 5m candle closes, so Yahoo has the candle).
-   - *Advanced*: Request method **POST**; Headers: `Authorization: Bearer YOUR_TOKEN`, `Accept: application/vnd.github+json`, `Content-Type: application/json`; Request body: `{"ref":"main"}` (use your default branch name).
+   - *Advanced*: Request method **POST**; Headers: `Authorization: Bearer YOUR_TOKEN`, `Accept: application/vnd.github+json`, `Content-Type: application/json`; Request body: `{"ref":"master"}` (this repo’s default branch).
+
+   - Optional **evening MCX** coverage: either rely on the built-in schedule jobs (15:50 → 19:47 and 19:50 → 23:32, commodities-only), or one-shot dispatch at ~15:50 IST with body
+     `{"ref":"master","inputs":{"commodities_only":true,"loop_until":"23:32"}}`
+     (do **not** put `loop_until` on the every-5-minute daytime cron — that would stack long-running jobs).
    - Save, then press *Test run*: a response of **204** means it worked, and a new "Agent Scanner" run appears in the Actions tab.
-3. **Check it**: run the workflow once manually with **heartbeat** ticked. With `HEARTBEAT` on (set `HEARTBEAT: "true"` in `scanner.yml`), every scan sends a small "💓 Scan OK" message so you can see scans happen every 5 minutes; remove it once you trust it.
+3. **Check it**: *Run workflow* → tick **heartbeat** (optional; default off). Each scan then sends a small "💓 Scan OK" Telegram so you can confirm cron is firing every 5 minutes; leave it unticked once you trust the schedule.
 4. **Also check** *Actions → Agent Scanner*: the "Event" of each run says `schedule` or `workflow_dispatch`. If the workflow file is not on the default branch, or the repo was inactive for 60 days, GitHub stops `schedule` runs.
 5. **Minutes**: public repos have unlimited free Actions minutes. A private repo on the Free plan gets 2,000 minutes a month, and a full day of 5-minute scans uses roughly 100-150, so it would run out in about two weeks. If your repo is private, make it public (the Telegram token stays secret) or use a paid plan.
 

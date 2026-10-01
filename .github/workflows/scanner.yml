@@ -57,6 +57,10 @@ on:
       entry_after:
         description: "Only alert entries at/after this IST HH:MM today, e.g. 12:50 (blank = all today)"
         required: false
+      heartbeat:
+        description: "Optional: send a small Telegram 'Scan OK' after each scan (for verifying cron)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -92,6 +96,7 @@ jobs:
           HTF_MIN: ${{ inputs.htf_min }}
           FRESH_MIN: ${{ inputs.fresh_min }}
           ENTRY_AFTER: ${{ inputs.entry_after }}
+          HEARTBEAT: ${{ inputs.heartbeat }}
           INCLUDE_COMMODITIES: "true"
           # Evening crons (and manual commodities_only) skip the 210-symbol equity list
           COMMODITIES_ONLY: ${{ (github.event_name == 'schedule' && (github.event.schedule == '20 10 * * 1-5' || github.event.schedule == '20 14 * * 1-5')) && 'true' || (inputs.commodities_only == true && 'true' || 'false') }}
