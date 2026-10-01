@@ -47,7 +47,8 @@ Python port of your Pine strategy **"Agent Confluence Backtest"**.
 Every Mon–Fri after NSE close the bot posts one message covering **that calendar day only**:
 - **Signals sent** – count of alerts in `state.json` for today
 - **Win rate** – % of re-simulated trades with PnL > 0
-- **Net PnL** – sum of trade PnL (₹), plus average R
+- **Net PnL** – sum of trade PnL (₹), plus average R and W/L totals
+- **Winners / losers** – per-trade list (entry time, side, symbol, PnL, R, outcome); if the day is busy, top winners and worst losers are shown and the rest are counted
 
 **Fill model (same as scanner / backtest):** entry at signal candle close ± slippage; 50% exit at TP1 and 50% at TP2; shared SL; commission default 0.03%/side; slippage 1 tick × 0.05; with `EOD_EXIT=false` (default) any trade still open is marked-to-market at the last available close (outcome `Still open at data end`). Capital / risk % match alert sizing (`CAPITAL`, `RISK_PCT`).
 

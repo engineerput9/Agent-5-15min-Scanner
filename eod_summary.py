@@ -95,68 +95,100 @@ def collect_day_trades(today: str, p: Params, bt: BT, sent: list[tuple[str, str,
         matched.append(row)
     return matched
 
+def _is_open_trade(t: dict) -> bool:
+    o = str(t.get("outcome", "")).upper()
+    return "OPEN" in o or "STILL OPEN" in o
 
-def format_eod(today: str, trades: list[dict], p: Params, capital: float, bt: BT) -> str:
+
+def _trade_line(t: dict) -> str:
+    """One compact mobile-friendly line: time, side, symbol, PnL (R), outcome."""
+    side = t.get("side", "?")
+    name = display_name(t["symbol"])
+    ts = pd.Timestamp(t["entry_time"]).strftime("%H:%M")
+    pnl = float(t.get("pnl") or 0)
+    r = float(t.get("r_multiple") or 0)
+    out = str(t.get("outcome", "?"))
+    out = (out.replace("Still open at data end", "open")
+              .replace("TP1 + TP2", "TP1+TP2")
+              .replace("TP1 then ", "TP1→")
+              .replace("EOD (no target)", "EOD"))
+    mark = "⏳ " if _is_open_trade(t) else ""
+    return f"{mark}{ts} {side} {name}: ₹{pnl:+,.0f} ({r:+.2f}R) {out}".strip()
+
+
+def _section_lines(title: str, rows: list[dict], limit: int, sort_desc: bool) -> list[str]:
+    """Winners/losers block: list up to `limit`, then '+N more' with residual PnL."""
+    if not rows:
+        return [f"<b>{title}</b> (0)", "<i>none</i>"]
+    ordered = sorted(rows, key=lambda t: float(t.get("pnl") or 0), reverse=sort_desc)
+    shown = ordered[:limit]
+    rest = len(ordered) - len(shown)
+    rest_pnl = sum(float(t.get("pnl") or 0) for t in ordered[limit:])
+    lines = [f"<b>{title}</b> ({len(ordered)})"]
+    lines.extend(_trade_line(t) for t in shown)
+    if rest > 0:
+        lines.append(f"… +{rest} more (₹{rest_pnl:+,.0f})")
+    return lines
+
+
+def format_eod(today: str, trades: list[dict], p: Params, capital: float, bt: BT,
+               max_each: int = 12) -> str:
+    """Build EOD Telegram HTML with explicit winners & losers lists."""
     n = len(trades)
     priced = [t for t in trades if t.get("_priced", True) and t.get("outcome") != "NO_FILL_DATA"]
-    def _is_open(t):
-        o = str(t.get("outcome", "")).upper()
-        return "OPEN" in o or "STILL OPEN" in o
-    openish = [t for t in priced if _is_open(t)]
-    closed = [t for t in priced if not _is_open(t)]
-    # Win rate on priced trades (incl. MTM open at last close — same as backtest simulate)
-    wins = [t for t in priced if t.get("pnl", 0) > 0]
-    losses = [t for t in priced if t.get("pnl", 0) <= 0]
+    openish = [t for t in priced if _is_open_trade(t)]
+    wins = [t for t in priced if float(t.get("pnl") or 0) > 0]
+    losses = [t for t in priced if float(t.get("pnl") or 0) <= 0]
     net = sum(float(t.get("pnl") or 0) for t in priced)
     fees = sum(float(t.get("fees") or 0) for t in priced)
     avg_r = (sum(float(t.get("r_multiple") or 0) for t in priced) / len(priced)) if priced else 0.0
     wr = (len(wins) / len(priced) * 100) if priced else 0.0
+    win_pnl = sum(float(t.get("pnl") or 0) for t in wins)
+    loss_pnl = sum(float(t.get("pnl") or 0) for t in losses)
+
+    limit = max_each
+    if len(priced) > 40:
+        limit = min(limit, 8)
+    elif len(priced) > 24:
+        limit = min(limit, 10)
 
     lines = [
         f"📊 <b>EOD Summary – {today}</b>",
-        f"<i>Agent Confluence {p.base_min}m / HTF {p.htf_min}m • RR {p.rr1:g}/{p.rr2:g} • "
-        f"risk {p.risk_pct:g}% • capital ₹{capital:,.0f}</i>",
+        f"<i>{p.base_min}m / HTF {p.htf_min}m • RR {p.rr1:g}/{p.rr2:g} • "
+        f"risk {p.risk_pct:g}% • ₹{capital:,.0f}</i>",
         "",
-        f"Signals sent: <b>{n}</b>",
-        f"Priced (sim fills): <b>{len(priced)}</b>"
-        + (f"  • still open @ last close: {len(openish)}" if openish else ""),
+        f"Signals: <b>{n}</b>  •  priced: <b>{len(priced)}</b>"
+        + (f"  •  open/MTM: {len(openish)}" if openish else ""),
     ]
     if priced:
         lines += [
             f"Win rate: <b>{wr:.1f}%</b>  ({len(wins)}W / {len(losses)}L)",
-            f"Net PnL: <b>₹{net:,.0f}</b>  (avg {avg_r:+.2f}R • fees ₹{fees:,.0f})",
+            f"Net PnL: <b>₹{net:,.0f}</b>  (W ₹{win_pnl:+,.0f} / L ₹{loss_pnl:+,.0f} • "
+            f"avg {avg_r:+.2f}R • fees ₹{fees:,.0f})",
         ]
     else:
         lines += ["Win rate: —", "Net PnL: —"]
 
-    lines += [
-        "",
-        "<i>Assumptions (same as backtest/scanner): entry at signal close ± slippage; "
-        f"50% @ TP1 / 50% @ TP2; shared SL; commission {bt.commission_pct:g}%/side; "
-        f"slippage {bt.slippage_ticks:g} tick×{bt.tick}; "
-        f"{'EOD square-off ON' if p.eod_exit else 'no square-off (open = MTM @ last close)'}.</i>",
-    ]
-
-    # Compact per-trade lines (cap so Telegram stays under 4000)
     if priced:
         lines.append("")
-        lines.append("<b>Trades</b>")
-        for t in priced[:40]:
-            icon = ("⏳" if _is_open(t) else ("✅" if t.get("pnl", 0) > 0 else "❌"))
-            side = t.get("side", "?")
-            name = display_name(t["symbol"])
-            ts = pd.Timestamp(t["entry_time"]).strftime("%H:%M")
-            pnl = float(t.get("pnl") or 0)
-            r = float(t.get("r_multiple") or 0)
-            out = t.get("outcome", "?")
-            lines.append(f"{icon} {ts} {side} {name}: ₹{pnl:+,.0f} ({r:+.2f}R) · {out}")
-        if len(priced) > 40:
-            lines.append(f"… +{len(priced) - 40} more")
+        lines.extend(_section_lines("✅ Winners", wins, limit, sort_desc=True))
+        lines.append("")
+        lines.extend(_section_lines("❌ Losers", losses, limit, sort_desc=False))
+
+    lines += [
+        "",
+        f"<i>Same fill model as backtest: close±slip, 50% TP1/TP2, shared SL, "
+        f"comm {bt.commission_pct:g}%/side, slip {bt.slippage_ticks:g}×{bt.tick}"
+        f"{'; open=MTM' if not p.eod_exit else '; EOD square-off'}.</i>",
+    ]
     unpriced = n - len(priced)
     if unpriced:
-        lines.append(f"\n⚠️ {unpriced} alert(s) could not be re-priced (no data / no sim match).")
+        lines.append(f"⚠️ {unpriced} alert(s) could not be re-priced.")
 
-    return "\n".join(lines)
+    msg = "\n".join(lines)
+    if len(msg) > 3900 and limit > 3:
+        return format_eod(today, trades, p, capital, bt, max_each=limit - 1)
+    return msg
 
 
 def already_sent(state: dict, today: str) -> bool:
