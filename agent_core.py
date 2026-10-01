@@ -23,19 +23,12 @@ NAMES = {
     "^NSEI": "NIFTY 50",
     "^NSEBANK": "BANK NIFTY",
     "NIFTY_MID_SELECT.NS": "MIDCAP NIFTY",
-    # Yahoo continuous futures used as MCX proxies
+    # Yahoo continuous futures → MCX-style display/alert names
     "GC=F": "GOLD",
     "SI=F": "SILVER",
-    "CL=F": "CRUDE OIL",
-    "NG=F": "NATURAL GAS",
+    "CL=F": "CRUDEOIL",
     "HG=F": "COPPER",
-    "BZ=F": "BRENT",
-    "PL=F": "PLATINUM",
-    "PA=F": "PALLADIUM",
-    "MGC=F": "MICRO GOLD",
-    "SIL=F": "MICRO SILVER",
-    "QM=F": "MINI CRUDE",
-    "QG=F": "MINI NATGAS",
+    "NG=F": "NATURALGAS",
 }
 ALIASES = {
     "NIFTY": "^NSEI",

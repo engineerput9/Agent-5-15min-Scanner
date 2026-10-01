@@ -145,8 +145,7 @@ def _asset_class(sym: str) -> str:
     """Equity/index vs commodity futures proxy (Yahoo =F / known NAMES)."""
     s = str(sym)
     if s.endswith("=F") or s in (
-        "GC=F", "SI=F", "CL=F", "NG=F", "HG=F", "BZ=F", "PL=F", "PA=F",
-        "MGC=F", "SIL=F", "QM=F", "QG=F",
+        "GC=F", "SI=F", "CL=F", "HG=F", "NG=F",
     ):
         return "commodity"
     return "equity"

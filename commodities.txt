@@ -1,22 +1,11 @@
 # MCX-relevant Yahoo Finance continuous futures (proxies — Yahoo has no India MCX continuous).
 # One symbol per line. INCLUDE_COMMODITIES=true merges this into the scan list.
 # Session auto-widens to 09:00–23:30 IST when any =F ticker is loaded.
+# Display/alert names use MCX-style labels via NAMES in agent_core.py.
 #
-# ---- Core metals / energy (verified working on Yahoo 5m) ----
-GC=F      # Gold
-SI=F      # Silver
-CL=F      # WTI Crude
-NG=F      # Natural Gas
-HG=F      # Copper
-BZ=F      # Brent Crude
-PL=F      # Platinum
-PA=F      # Palladium
-# ---- Micros / minis (also work; optional) ----
-# MGC=F   # Micro Gold
-# SIL=F   # Micro Silver
-# QM=F    # E-mini Crude
-# QG=F    # E-mini NatGas
-# ---- NSE bullion ETFs (cash session 09:15–15:30 only; not MCX futures) ----
-# GOLDBEES
-# SILVERBEES
-# ---- Skipped on Yahoo (no data): MCXGOLD, MCXSILVER, MCXCRUDE, GOLD.NS ----
+# ---- Core metals / energy only (verified working on Yahoo 5m) ----
+GC=F      # GOLD
+SI=F      # SILVER
+CL=F      # CRUDEOIL
+HG=F      # COPPER
+NG=F      # NATURALGAS

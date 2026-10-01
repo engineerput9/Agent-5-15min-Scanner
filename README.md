@@ -89,18 +89,15 @@ Downloads are batched (40 symbols per Yahoo call), so a full scan should take ab
 ### MCX / commodities
 Yahoo does **not** list India MCX continuous contracts. Use COMEX/NYMEX continuous futures in `commodities.txt` as price proxies (same as TradingView `GC1!` / `CL1!` style feeds). Verified working on Yahoo (5m):
 
-| Ticker | Proxy for |
+| Yahoo ticker | Alert / display (MCX-style) |
 |---|---|
-| `GC=F` | Gold (MCX Gold) |
-| `SI=F` | Silver (MCX Silver) |
-| `CL=F` | Crude oil (MCX Crude) |
-| `NG=F` | Natural gas (MCX NatGas) |
-| `HG=F` | Copper (MCX Copper) |
-| `BZ=F` | Brent crude |
-| `PL=F` / `PA=F` | Platinum / Palladium |
-| `MGC=F` / `SIL=F` / `QM=F` / `QG=F` | Micro gold / micro silver / mini crude / mini natgas |
+| `GC=F` | GOLD |
+| `SI=F` | SILVER |
+| `CL=F` | CRUDEOIL |
+| `HG=F` | COPPER |
+| `NG=F` | NATURALGAS |
 
-Optional NSE bullion ETFs (cash hours only): `GOLDBEES`, `SILVERBEES`. Direct names like `MCXGOLD` / `GOLD.NS` **do not** work on Yahoo — they are skipped.
+Only these five are scanned (brent / platinum / palladium / micros / ETFs dropped). Direct names like `MCXGOLD` / `GOLD.NS` **do not** work on Yahoo.
 
 Enable in the scanner with `INCLUDE_COMMODITIES=true` (merges `commodities.txt`). When any `=F` futures are loaded, session defaults widen to **09:00–23:30 IST** (approx. MCX hours) unless you override `SESSION_START` / `SESSION_END`. Equity-only runs stay at 09:15–15:30.
 
