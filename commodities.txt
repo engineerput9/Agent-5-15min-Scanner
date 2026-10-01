@@ -1,4 +1,4 @@
-# MCX-relevant Yahoo Finance continuous futures (proxies — Yahoo has no India MCX continuous).
+# PAUSED: MCX-relevant Yahoo Finance continuous futures proxies; awaiting broker-backed MCX feed.
 # One symbol per line. INCLUDE_COMMODITIES=true merges this into the scan list.
 # Session auto-widens to 09:00–23:30 IST when any =F ticker is loaded.
 # Display/alert names use MCX-style labels via NAMES in agent_core.py.
