@@ -7,12 +7,12 @@ Python port of your Pine strategy **"Agent Confluence Backtest"**.
 - **Signal (either way, both timeframes must agree):**
   1. **5m flip**: the 5m Range Filter flips on a closed candle while the 15m regime agrees and the 15m flipped recently (within `MAX_AGE` 15m candles, default 2).
   2. **15m flip**: the 15m flips and the 5m regime already points the same way. The alert comes on the first 5m candle after that 15m candle closes.
-- **Levels** (same as Pine): SL = swing low/high of last 10 candles, or 1×ATR if that is tighter. TP1 = 0.8R, TP2 = 1.5R.
-- **No daily limit, no square-off**: a symbol can signal any number of times, and a trade runs (also overnight) until SL or TP2. A new signal for the same symbol is not sent while its previous trade is still running.
-- **Rules**: signals only on closed candles. No end-of-day square-off: a trade runs (even overnight) until SL or TP2 is hit; TP1 books 50%.
-- **Alert**: Entry, SL, TP1, TP2, risk-based quantity and which of the two triggers fired.
+- **Levels** (same as Pine): SL = swing low/high of last 10 candles, or 1×ATR if that is tighter. **TP1 = 0.8R (sole target, full size)** — no TP2.
+- **No daily limit, no square-off**: a symbol can signal any number of times, and a trade runs (also overnight) until SL or TP1. A new signal for the same symbol is not sent while its previous trade is still running.
+- **Rules**: signals only on closed candles. No end-of-day square-off: a trade runs (even overnight) until SL or TP1 is hit; **full size books at TP1**.
+- **Alert**: Entry, SL, TP1, risk-based quantity and which of the two triggers fired.
 - **EOD summary**: after close each trading day, one Telegram message with that day's signal count, win rate, and PnL (same SL/TP fill model as the backtest).
-- **Backtest**: same engine as the scanner. 50% exits at TP1, 50% at TP2, shared SL, EOD exit, commission, slippage, intrabar fill model, gap fills.
+- **Backtest**: same engine as the scanner. Full-size exit at TP1, shared SL, optional EOD exit, commission, slippage, intrabar fill model, gap fills.
 
 ## Files
 | File | Purpose |
@@ -21,7 +21,8 @@ Python port of your Pine strategy **"Agent Confluence Backtest"**.
 | `scanner.py` | Live scanner |
 | `backtest.py` | Backtester + reports |
 | `symbols.txt` | Full F&O list (210 symbols) |
-| `Agent_Confluence_Indicator.pine` | TradingView indicator (entry, SL, TP1, TP2 labels + alerts) |
+| `commodities.txt` | MCX-relevant Yahoo futures proxies (gold, silver, crude, …) |
+| `Agent_Confluence_Indicator.pine` | TradingView indicator (entry, SL, TP1 labels + alerts) |
 | `requirements.txt` | Python packages |
 | `loop.py` | Runs the scanner right after every 5m candle close until a stop time; posts EOD summary when the afternoon session ends |
 | `eod_summary.py` | End-of-day Telegram summary (signal count, win rate, PnL) for alerts sent that day |
@@ -50,7 +51,7 @@ Every Mon–Fri after NSE close the bot posts one message covering **that calend
 - **Winners / losers** – per-trade list (entry time, side, symbol, PnL, R, outcome); if the day is busy, top winners and worst losers are shown and the rest are counted
 - **Trigger storage** – `state.json` records `entry_type` (and side) when each alert is sent so EOD does not depend only on re-sim
 
-**Fill model (same as scanner / backtest):** entry at signal candle close ± slippage; 50% exit at TP1 and 50% at TP2; shared SL; commission default 0.03%/side; slippage 1 tick × 0.05; with `EOD_EXIT=false` (default) any trade still open is marked-to-market at the last available close (outcome `Still open at data end`). Capital / risk % match alert sizing (`CAPITAL`, `RISK_PCT`).
+**Fill model (same as scanner / backtest):** entry at signal candle close ± slippage; **full size exits at TP1**; shared SL; commission default 0.03%/side; slippage 1 tick × 0.05; with `EOD_EXIT=false` (default) any trade still open is marked-to-market at the last available close (outcome `Still open at data end`). Capital / risk % match alert sizing (`CAPITAL`, `RISK_PCT`).
 
 **Triggers (recurring every trading day):**
 1. Scheduled Actions cron `10 10 * * 1-5` (~15:40 IST) → `python eod_summary.py`
@@ -74,7 +75,25 @@ GitHub's built-in schedule is best-effort: runs are often delayed by 10-30+ minu
 ## Your symbol list
 `symbols.txt` already contains the full F&O list you shared (207 stocks) plus NIFTY, BANKNIFTY and MIDCPNIFTY (210 in total). Edit it any time: one symbol per line, no `.NS` needed, `#` for comments. Symbols Yahoo cannot find (renamed or newly listed) are skipped and listed in the log.
 
-Downloads are batched (40 symbols per Yahoo call), so a full scan should take about a minute rather than several. MCX/commodities later: add Yahoo futures tickers (e.g. `GC=F`) and set `SESSION_START` / `SESSION_END` env vars.
+Downloads are batched (40 symbols per Yahoo call), so a full scan should take about a minute rather than several.
+
+### MCX / commodities
+Yahoo does **not** list India MCX continuous contracts. Use COMEX/NYMEX continuous futures in `commodities.txt` as price proxies (same as TradingView `GC1!` / `CL1!` style feeds). Verified working on Yahoo (5m):
+
+| Ticker | Proxy for |
+|---|---|
+| `GC=F` | Gold (MCX Gold) |
+| `SI=F` | Silver (MCX Silver) |
+| `CL=F` | Crude oil (MCX Crude) |
+| `NG=F` | Natural gas (MCX NatGas) |
+| `HG=F` | Copper (MCX Copper) |
+| `BZ=F` | Brent crude |
+| `PL=F` / `PA=F` | Platinum / Palladium |
+| `MGC=F` / `SIL=F` / `QM=F` / `QG=F` | Micro gold / micro silver / mini crude / mini natgas |
+
+Optional NSE bullion ETFs (cash hours only): `GOLDBEES`, `SILVERBEES`. Direct names like `MCXGOLD` / `GOLD.NS` **do not** work on Yahoo — they are skipped.
+
+Enable in the scanner with `INCLUDE_COMMODITIES=true` (merges `commodities.txt`). When any `=F` futures are loaded, session defaults widen to **09:00–23:30 IST** (approx. MCX hours) unless you override `SESSION_START` / `SESSION_END`. Equity-only runs stay at 09:15–15:30.
 
 ## Settings (env vars in `scanner.yml`, or flags in `backtest.py`)
 | Pine input | Env var | Backtest flag | Default |
@@ -87,7 +106,9 @@ Downloads are batched (40 symbols per Yahoo call), so a full scan should take ab
 | Max age of HTF flip (HTF candles) | `MAX_AGE` | `--max-age` | 2 (0 = any) |
 | 15m flip + 5m already aligned trigger | `HTF_TRIGGER` | `--no-htf-trigger` | on |
 | Swing lookback / ATR length / ATR mult | `SWING_LOOKBACK`, `ATR_LENGTH`, `ATR_MULT` | same | 10 / 14 / 1.0 |
-| Target 1 / 2 RR | `RR1`, `RR2` | `--rr1`, `--rr2` | 0.8 / 1.5 |
+| Target 1 RR (sole target, full size) | `RR1` | `--rr1` | 0.8 |
+| Include commodities.txt | `INCLUDE_COMMODITIES` | — | off |
+| Session (auto-widens for futures) | `SESSION_START`, `SESSION_END` | — | 09:15 / 15:30 (equity) or 09:00 / 23:30 (with futures) |
 | Risk % of equity | `RISK_PCT` | `--risk-pct` | 1.0 |
 | One trade per day | `ONE_TRADE_DAY` | `--one-trade-day` | off (no limit) |
 | Square off at end of session | `EOD_EXIT` | `--eod` | off |
@@ -102,7 +123,7 @@ To use a 15m chart with 60m confirmation: `BASE_MIN=15`, `HTF_MIN=60` (or run th
 - `--commission 0.03` (% per side), `--slippage-ticks 1`, `--tick 0.05`, `--capital 100000`, `--leverage 1`, `--warmup 450`
 - `--csv-dir folder` : use your own longer history. Files: `RELIANCE.csv`, `NSEI.csv` (Nifty), `NSEBANK.csv`; columns `datetime,open,high,low,close,volume` (naive times = IST)
 
-Report contents: win rate, % hitting SL / TP1 / TP2 / EOD, outcome mix (SL, TP1 then SL, TP1+TP2, TP1 then EOD, …), profit factor, expectancy in R, drawdown, losing streak, daily Sharpe, MFE/MAE per trade, and breakdowns by side, weekday, entry hour, month, symbol.
+Report contents: win rate, % hitting SL / TP1 / EOD, outcome mix (SL, TP1, TP1 then EOD, …), profit factor, expectancy in R, drawdown, losing streak, daily Sharpe, MFE/MAE per trade, and breakdowns by side, weekday, entry hour, month, symbol.
 
 ## Things to know (honest limits)
 - **Yahoo intraday history is ~60 days** for 5m/15m, so a backtest covers about 2 months. Treat results as indicative; for real confidence use `--csv-dir` with a year or more from your broker.

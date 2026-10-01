@@ -16,7 +16,7 @@ import traceback
 import pandas as pd
 
 import scanner
-from agent_core import IST, Params
+from agent_core import IST, Params, apply_session_for_universe, load_symbols
 
 
 def _hash(path: str) -> str:
@@ -45,6 +45,7 @@ def _push_state() -> None:
 
 def main() -> None:
     p = Params.from_env()
+    p = apply_session_for_universe(p, load_symbols())
     delay = int(float(os.getenv("LOOP_DELAY_SEC") or 25))
     now = pd.Timestamp.now(tz=IST)
     until = os.getenv("LOOP_UNTIL")

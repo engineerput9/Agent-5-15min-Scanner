@@ -2,8 +2,8 @@
 backtest.py - Agent Confluence backtester (mirrors the Pine strategy).
 
 Entry  : at the close of the signal candle (+ slippage), risk-based quantity
-Exits  : 50% at TP1, 50% at TP2, both share the same SL (optional: SL -> breakeven after TP1)
-         + optional end-of-day square-off (--eod); default: trades run until SL/TP, also overnight
+Exits  : full size at TP1 (sole target), shared SL (optional: SL -> breakeven after TP1)
+         + optional end-of-day square-off (--eod); default: trades run until SL/TP1, also overnight
 Fills  : intrabar path model (TradingView style), gap-through fills at the open,
          commission on every fill, slippage on market/stop fills.
 
@@ -25,8 +25,8 @@ import numpy as np
 import pandas as pd
 
 from agent_core import (
-    Params, build_frame, calc_qty, display_name, fetch_many, levels, load_csv,
-    load_symbols, prepare, tg_send, tg_send_file,
+    Params, apply_session_for_universe, build_frame, calc_qty, display_name,
+    fetch_many, levels, load_csv, load_symbols, prepare, tg_send, tg_send_file,
 )
 
 
@@ -60,10 +60,8 @@ def process_bar(pos: dict, o: float, h: float, l: float, c: float, bt: BT):
     for a, b in zip(path[:-1], path[1:]):
         while pos["left"] > 0:
             orders = [("sl", pos["sl"], "down" if side == 1 else "up", "stop")]
-            if not pos["tp1_done"] and pos["q1"] > 0:
+            if not pos["tp1_done"]:
                 orders.append(("tp1", pos["tp1"], "up" if side == 1 else "down", "limit"))
-            if not pos["tp2_done"]:
-                orders.append(("tp2", pos["tp2"], "up" if side == 1 else "down", "limit"))
             best = None
             for kind, lvl, trig, style in orders:
                 if trig == "up":
@@ -84,17 +82,13 @@ def process_bar(pos: dict, o: float, h: float, l: float, c: float, bt: BT):
             if kind == "sl":
                 q = pos["left"]
                 reason = "BE" if pos["be_active"] else "SL"
-            elif kind == "tp1":
-                q = min(pos["q1"], pos["left"])
+            else:  # tp1 — full size
+                q = pos["left"]
                 pos["tp1_done"] = True
                 reason = "TP1"
                 if bt.be_after_tp1:
                     pos["sl"] = pos["entry_px"]
                     pos["be_active"] = True
-            else:
-                q = pos["left"] if pos["tp1_done"] or pos["q1"] == 0 else min(pos["q2"], pos["left"])
-                pos["tp2_done"] = True
-                reason = "TP2"
             pos["left"] -= q
             fills.append((px, q, reason))
             a = hit
@@ -132,12 +126,10 @@ def simulate(sym: str, d: pd.DataFrame, p: Params, bt: BT) -> list[dict]:
             label = "EOD (no target)"
         elif reasons == ["OPEN"]:
             label = "Still open at data end"
-        elif reasons[0] == "TP1" and reasons[-1] == "TP2":
-            label = "TP1 + TP2"
+        elif reasons == ["TP1"]:
+            label = "TP1"
         elif reasons[0] == "TP1":
             label = f"TP1 then {reasons[-1]}"
-        elif reasons == ["TP2"]:
-            label = "TP2 only"
         else:
             label = " > ".join(reasons)
         rk = pos["risk"] * pos["qty"]
@@ -145,10 +137,10 @@ def simulate(sym: str, d: pd.DataFrame, p: Params, bt: BT) -> list[dict]:
             "symbol": sym, "side": "LONG" if s == 1 else "SHORT",
             "entry_time": idx[pos["i0"]], "exit_time": pos["fills"][-1][0],
             "entry": round(pos["entry_px"], 2), "sl": round(pos["sl0"], 2),
-            "tp1": round(pos["tp1"], 2), "tp2": round(pos["tp2"], 2),
+            "tp1": round(pos["tp1"], 2),
             "qty": pos["qty"], "risk_per_unit": round(pos["risk"], 2),
             "entry_type": entry_type[pos["i0"]], "outcome": label, "hit_sl": "SL" in reasons, "hit_be": "BE" in reasons,
-            "hit_tp1": "TP1" in reasons, "hit_tp2": "TP2" in reasons, "eod_exit": "EOD" in reasons,
+            "hit_tp1": "TP1" in reasons, "eod_exit": "EOD" in reasons,
             "avg_exit": round(sum(px * q for _, px, q, _ in pos["fills"]) / pos["qty"], 2),
             "gross_pnl": round(gross, 2), "fees": round(fees, 2), "pnl": round(pnl, 2),
             "r_multiple": round(pnl / rk, 3) if rk else 0.0,
@@ -176,15 +168,13 @@ def simulate(sym: str, d: pd.DataFrame, p: Params, bt: BT) -> list[dict]:
             if p.one_trade_day and traded_date == dates[i]:
                 continue
             side = 1 if raw_l[i] else -1
-            sl, tp1, tp2, risk = levels(side, C[i], atr[i], ph[i], pl[i], p)
+            sl, tp1, risk = levels(side, C[i], atr[i], ph[i], pl[i], p)
             qty = calc_qty(equity, C[i], risk, p, bt.leverage)
             if qty <= 0 or risk <= 0:
                 continue
             entry_px = C[i] + side * slip
-            q1 = qty // 2
             pos = {"side": side, "i0": i, "entry_px": entry_px, "sl": sl, "sl0": sl, "tp1": tp1,
-                   "tp2": tp2, "qty": qty, "left": qty, "q1": q1, "q2": qty - q1,
-                   "tp1_done": False, "tp2_done": False, "be_active": False,
+                   "qty": qty, "left": qty, "tp1_done": False, "be_active": False,
                    "risk": risk, "fills": [], "mfe": 0.0, "mae": 0.0}
             traded_date = dates[i]
 
@@ -220,7 +210,6 @@ def stats(t: pd.DataFrame, capital: float, nsym: int, all_dates) -> dict:
         "win_rate_%": round(len(w) / n * 100, 1),
         "sl_hit_%": round(t.hit_sl.mean() * 100, 1),
         "tp1_hit_%": round(t.hit_tp1.mean() * 100, 1),
-        "tp2_hit_%": round(t.hit_tp2.mean() * 100, 1),
         "eod_exit_%": round(t.eod_exit.mean() * 100, 1),
         "net_pnl": round(t.pnl.sum(), 0),
         "return_%_on_capital": round(t.pnl.sum() / base * 100, 2),
@@ -248,7 +237,6 @@ def breakdown(t: pd.DataFrame, key) -> pd.DataFrame:
         "trades": g.size(),
         "win_%": g.apply(lambda x: round((x.pnl > 0).mean() * 100, 1)),
         "tp1_%": g.apply(lambda x: round(x.hit_tp1.mean() * 100, 1)),
-        "tp2_%": g.apply(lambda x: round(x.hit_tp2.mean() * 100, 1)),
         "sl_%": g.apply(lambda x: round(x.hit_sl.mean() * 100, 1)),
         "avg_R": g.r_multiple.mean().round(2),
         "net_pnl": g.pnl.sum().round(0),
@@ -327,11 +315,11 @@ def main() -> None:
     ap.add_argument("--warmup", type=int, default=450)
     ap.add_argument("--leverage", type=float, default=1.0)
     for name, typ in [("per", int), ("mult", float), ("base-min", int), ("htf-min", int), ("max-age", int),
-                      ("rr1", float), ("rr2", float), ("risk-pct", float), ("atr-mult", float),
+                      ("rr1", float), ("risk-pct", float), ("atr-mult", float),
                       ("swing-lookback", int), ("atr-length", int)]:
         ap.add_argument(f"--{name}", type=typ)
     ap.add_argument("--no-htf", action="store_true")
-    ap.add_argument("--eod", action="store_true", help="square off at the end of each session (default: trades run until SL/TP2)")
+    ap.add_argument("--eod", action="store_true", help="square off at the end of each session (default: trades run until SL/TP1)")
     ap.add_argument("--one-trade-day", action="store_true", help="limit to one trade per symbol per day (default: no limit)")
     ap.add_argument("--no-htf-trigger", action="store_true", help="disable the 'HTF flips while chart TF already aligned' entry")
     ap.add_argument("--long-only", action="store_true")
@@ -339,7 +327,7 @@ def main() -> None:
     a = ap.parse_args()
 
     p = Params.from_env()
-    for k in ("per", "mult", "base_min", "htf_min", "max_age", "rr1", "rr2", "risk_pct", "atr_mult",
+    for k in ("per", "mult", "base_min", "htf_min", "max_age", "rr1", "risk_pct", "atr_mult",
               "swing_lookback", "atr_length"):
         v = getattr(a, k)
         if v is not None:
@@ -361,6 +349,7 @@ def main() -> None:
     if a.symbols:
         os.environ["SYMBOLS"] = a.symbols
     symbols = load_symbols()
+    p = apply_session_for_universe(p, symbols)
     days = a.days or (59 if p.base_min < 60 else 365)
     os.makedirs(a.out, exist_ok=True)
 
@@ -409,7 +398,7 @@ def main() -> None:
 
     md = [f"# Agent Confluence backtest\n",
           f"Data: {span} | {p.base_min}m chart, HTF {p.htf_min}m {'ON' if p.use_htf else 'OFF'} (max age {p.max_age}) | "
-          f"15m-flip trigger {'ON' if p.htf_trigger else 'OFF'} | one trade/day {'ON' if p.one_trade_day else 'OFF'} | EOD square-off {'ON' if p.eod_exit else 'OFF'} | RR {p.rr1:g}/{p.rr2:g} | risk {p.risk_pct:g}% | commission {bt.commission_pct}%/side | "
+          f"15m-flip trigger {'ON' if p.htf_trigger else 'OFF'} | one trade/day {'ON' if p.one_trade_day else 'OFF'} | EOD square-off {'ON' if p.eod_exit else 'OFF'} | RR {p.rr1:g} (TP1 only) | risk {p.risk_pct:g}% | commission {bt.commission_pct}%/side | "
           f"slippage {bt.slippage_ticks:g} tick | ambiguity `{bt.ambiguity}` | BE after TP1: {bt.be_after_tp1} | EOD square-off: {'ON' if p.eod_exit else 'OFF (trades run)'}\n",
           "## Summary\n", md_table(pd.DataFrame([st]).T.reset_index().rename(columns={"index": "metric", 0: "value"})),
           "## Outcomes (what price did after entry)\n", md_table(outcome),
@@ -437,7 +426,7 @@ def main() -> None:
             tt["exit_time"] = pd.to_datetime(tt["exit_time"], utc=True).dt.tz_convert("Asia/Kolkata")
             s2 = stats(tt, bt.capital, len(data), all_dates)
             cmp_rows.append({"variant": name, "trades": s2["trades"], "win_%": s2["win_rate_%"],
-                             "tp1_%": s2["tp1_hit_%"], "tp2_%": s2["tp2_hit_%"], "sl_%": s2["sl_hit_%"],
+                             "tp1_%": s2["tp1_hit_%"], "sl_%": s2["sl_hit_%"],
                              "PF": s2["profit_factor"], "exp_R": s2["expectancy_R"],
                              "net_pnl": s2["net_pnl"], "max_dd_%": s2["max_drawdown_%"]})
         cmp_df = pd.DataFrame(cmp_rows)
@@ -456,9 +445,9 @@ def main() -> None:
 
     if a.telegram:
         lines = [f"📊 <b>Agent Confluence backtest</b>", f"<i>{span}</i>",
-                 f"{len(data)} symbols • {p.base_min}m / HTF {p.htf_min}m {'on' if p.use_htf else 'off'} • RR {p.rr1:g}/{p.rr2:g}", "",
+                 f"{len(data)} symbols • {p.base_min}m / HTF {p.htf_min}m {'on' if p.use_htf else 'off'} • RR {p.rr1:g} (TP1 only)", "",
                  f"Trades: <b>{st['trades']}</b> • Win {st['win_rate_%']}% • PF {st['profit_factor']}",
-                 f"TP1 hit {st['tp1_hit_%']}% • TP2 hit {st['tp2_hit_%']}% • SL hit {st['sl_hit_%']}% • EOD {st['eod_exit_%']}%",
+                 f"TP1 hit {st['tp1_hit_%']}% • SL hit {st['sl_hit_%']}% • EOD {st['eod_exit_%']}%",
                  f"Net P&L ₹{st['net_pnl']:,.0f} ({st['return_%_on_capital']}%) • Expectancy {st['expectancy_R']}R",
                  f"Max DD {st['max_drawdown_%']}% • Max losing streak {st['max_consec_losses']}", "",
                  "<b>Outcomes</b>"]

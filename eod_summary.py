@@ -1,7 +1,7 @@
 """
 eod_summary.py - End-of-day Telegram summary for signals sent today.
 
-Runs after NSE close (~15:30 IST). Uses the same simulate() / SL / TP1 / TP2 /
+Runs after NSE close (~15:30 IST). Uses the same simulate() / SL / TP1 /
 commission / slippage model as the live scanner and backtest so PnL and win rate
 match the engine that produced the alerts.
 
@@ -20,8 +20,8 @@ import sys
 import pandas as pd
 
 from agent_core import (
-    IST, Params, build_frame, closed_only, display_name, env_bool, fetch_many,
-    load_symbols, prepare, tg_send,
+    IST, Params, apply_session_for_universe, build_frame, closed_only,
+    display_name, env_bool, fetch_many, load_symbols, prepare, tg_send,
 )
 from backtest import BT, simulate
 from scanner import STATE_FILE, load_state, save_state
@@ -96,7 +96,7 @@ def collect_day_trades(today: str, p: Params, bt: BT,
                 "entry_time": pd.Timestamp(entry_iso),
                 "entry_type": meta.get("entry_type") or "?",
                 "outcome": "NO_FILL_DATA", "pnl": 0.0, "r_multiple": 0.0,
-                "hit_tp1": False, "hit_tp2": False, "hit_sl": False,
+                "hit_tp1": False, "hit_sl": False,
                 "eod_exit": False, "fees": 0.0, "_key": key, "_priced": False,
             })
             print(f"  {sym} @{entry_iso}: no matching simulated trade")
@@ -152,7 +152,6 @@ def _trade_line(t: dict) -> str:
     r = float(t.get("r_multiple") or 0)
     out = str(t.get("outcome", "?"))
     out = (out.replace("Still open at data end", "open")
-              .replace("TP1 + TP2", "TP1+TP2")
               .replace("TP1 then ", "TP1→")
               .replace("EOD (no target)", "EOD"))
     mark = "⏳ " if _is_open_trade(t) else ""
@@ -215,7 +214,7 @@ def format_eod(today: str, trades: list[dict], p: Params, capital: float, bt: BT
 
     lines = [
         f"📊 <b>EOD Summary – {today}</b>",
-        f"<i>{p.base_min}m / HTF {p.htf_min}m • RR {p.rr1:g}/{p.rr2:g} • "
+        f"<i>{p.base_min}m / HTF {p.htf_min}m • RR {p.rr1:g} (TP1 only) • "
         f"risk {p.risk_pct:g}% • ₹{capital:,.0f}</i>",
         "",
         f"Signals: <b>{n}</b>  •  priced: <b>{len(priced)}</b>"
@@ -244,7 +243,7 @@ def format_eod(today: str, trades: list[dict], p: Params, capital: float, bt: BT
 
     lines += [
         "",
-        f"<i>Same fill model as backtest: close±slip, 50% TP1/TP2, shared SL, "
+        f"<i>Same fill model as backtest: close±slip, full size at TP1, shared SL, "
         f"comm {bt.commission_pct:g}%/side, slip {bt.slippage_ticks:g}×{bt.tick}"
         f"{'; open=MTM' if not p.eod_exit else '; EOD square-off'}. "
         f"Trigger type from state at send (fallback: re-sim).</i>",
@@ -270,6 +269,7 @@ def mark_sent(state: dict, today: str) -> None:
 
 def run(dry_run: bool = False, force: bool = False) -> int:
     p = Params.from_env()
+    p = apply_session_for_universe(p)
     now = pd.Timestamp.now(tz=IST)
     today = now.strftime("%Y-%m-%d")
     # Optional override for testing a specific calendar day

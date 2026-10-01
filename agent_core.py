@@ -15,11 +15,27 @@ import pandas as pd
 import requests
 
 IST = "Asia/Kolkata"
+# Approx MCX / overnight futures hours (IST). Equity stays 09:15–15:30 unless overridden.
+COMMODITY_SESSION_START = "09:00"
+COMMODITY_SESSION_END = "23:30"
 
 NAMES = {
     "^NSEI": "NIFTY 50",
     "^NSEBANK": "BANK NIFTY",
     "NIFTY_MID_SELECT.NS": "MIDCAP NIFTY",
+    # Yahoo continuous futures used as MCX proxies
+    "GC=F": "GOLD",
+    "SI=F": "SILVER",
+    "CL=F": "CRUDE OIL",
+    "NG=F": "NATURAL GAS",
+    "HG=F": "COPPER",
+    "BZ=F": "BRENT",
+    "PL=F": "PLATINUM",
+    "PA=F": "PALLADIUM",
+    "MGC=F": "MICRO GOLD",
+    "SIL=F": "MICRO SILVER",
+    "QM=F": "MINI CRUDE",
+    "QG=F": "MINI NATGAS",
 }
 ALIASES = {
     "NIFTY": "^NSEI",
@@ -54,12 +70,11 @@ class Params:
     swing_lookback: int = 10
     atr_length: int = 14
     atr_mult: float = 1.0
-    rr1: float = 0.8
-    rr2: float = 1.5
+    rr1: float = 0.8             # sole target RR (full size)
     risk_pct: float = 1.0        # risk per trade, % of equity
     one_trade_day: bool = False  # no daily limit; a running trade simply continues (no overlap)
     htf_trigger: bool = True     # also signal when the HTF flips and the chart TF is already aligned
-    eod_exit: bool = False       # False = no square-off, the trade runs until SL / TP2
+    eod_exit: bool = False       # False = no square-off, the trade runs until SL / TP1
     allow_long: bool = True
     allow_short: bool = True
     session_start: str = "09:15"
@@ -95,31 +110,74 @@ def env_bool(name: str, default: bool = False) -> bool:
 # ----------------------------------------------------------------------------
 # Symbols
 # ----------------------------------------------------------------------------
-def load_symbols(path: str = "symbols.txt") -> list[str]:
+def _read_symbol_file(path: str) -> list[str]:
+    if not os.path.exists(path):
+        return []
+    with open(path) as fh:
+        return [ln.split("#")[0].strip() for ln in fh]
+
+
+def _normalize_symbol(s: str) -> str | None:
+    s = s.strip().upper()
+    if not s:
+        return None
+    s = ALIASES.get(s, s)
+    if not (s.startswith("^") or s.endswith((".NS", ".BO", "=F"))):
+        s += ".NS"
+    return s
+
+
+def load_symbols(path: str = "symbols.txt", commodities_path: str = "commodities.txt") -> list[str]:
+    """Load equity/F&O list; optionally merge commodities.txt (INCLUDE_COMMODITIES=true).
+
+    SYMBOLS env (comma list) overrides files entirely. Futures tickers end with =F.
+    """
     env = os.getenv("SYMBOLS")
-    raw = None
+    raw: list[str] = []
     if env and env.strip():
         raw = [s.strip() for s in env.split(",")]
-    elif os.path.exists(path):
-        with open(path) as fh:
-            raw = [ln.split("#")[0].strip() for ln in fh]
+    else:
+        raw = _read_symbol_file(path)
+        if env_bool("INCLUDE_COMMODITIES", False):
+            raw = list(raw) + _read_symbol_file(commodities_path)
+        # Commodities-only mode: COMMODITIES_ONLY=true uses only commodities.txt
+        if env_bool("COMMODITIES_ONLY", False):
+            raw = _read_symbol_file(commodities_path)
     if not raw or not any(raw):
-        raw = DEFAULT_SYMBOLS
+        raw = list(DEFAULT_SYMBOLS)
     out = []
     for s in raw:
-        s = s.strip().upper()
-        if not s:
-            continue
-        s = ALIASES.get(s, s)
-        if not (s.startswith("^") or s.endswith((".NS", ".BO", "=F"))):
-            s += ".NS"
-        if s not in out:
-            out.append(s)
+        n = _normalize_symbol(s)
+        if n and n not in out:
+            out.append(n)
     return out
 
 
+def has_futures(symbols: list[str] | None = None) -> bool:
+    syms = symbols if symbols is not None else load_symbols()
+    return any(s.endswith("=F") for s in syms)
+
+
+def apply_session_for_universe(p: "Params", symbols: list[str] | None = None) -> "Params":
+    """If futures are in the universe and session was left at equity defaults, widen to MCX hours.
+
+    Explicit SESSION_START / SESSION_END env always wins (Params.from_env already applied).
+    """
+    if not has_futures(symbols):
+        return p
+    start_set = os.getenv("SESSION_START") not in (None, "")
+    end_set = os.getenv("SESSION_END") not in (None, "")
+    if not start_set and p.session_start == "09:15":
+        p.session_start = os.getenv("COMMODITY_SESSION_START") or COMMODITY_SESSION_START
+    if not end_set and p.session_end == "15:30":
+        p.session_end = os.getenv("COMMODITY_SESSION_END") or COMMODITY_SESSION_END
+    return p
+
+
 def display_name(sym: str) -> str:
-    return NAMES.get(sym, sym.replace(".NS", ""))
+    if sym in NAMES:
+        return NAMES[sym]
+    return sym.replace(".NS", "").replace("=F", "")
 
 
 # ----------------------------------------------------------------------------
@@ -361,14 +419,14 @@ def build_frame(df: pd.DataFrame, p: Params) -> pd.DataFrame:
 
 
 def levels(side: int, close: float, atr: float, ph: float, pl: float, p: Params):
-    """Entry stop-loss and targets, identical to the Pine code. Returns sl, tp1, tp2, risk."""
+    """Entry stop-loss and sole target (TP1), identical to the Pine code. Returns sl, tp1, risk."""
     if side == 1:
         sl = close - atr * p.atr_mult if (close - pl) < atr * p.atr_mult else pl
         risk = close - sl
-        return sl, close + risk * p.rr1, close + risk * p.rr2, risk
+        return sl, close + risk * p.rr1, risk
     sl = close + atr * p.atr_mult if (ph - close) < atr * p.atr_mult else ph
     risk = sl - close
-    return sl, close - risk * p.rr1, close - risk * p.rr2, risk
+    return sl, close - risk * p.rr1, risk
 
 
 def calc_qty(equity: float, close: float, risk: float, p: Params, leverage: float = 1.0) -> int:
@@ -426,12 +484,12 @@ def tg_send_file(path: str, caption: str = "", token: str | None = None, chat_id
 
 
 def format_signal(sym: str, side: int, ts: pd.Timestamp, entry: float, sl: float,
-                  tp1: float, tp2: float, qty: int, p: Params, capital: float, entry_type: str = "",
+                  tp1: float, qty: int, p: Params, capital: float, entry_type: str = "",
                   delay_min: float = 0.0) -> str:
     risk = abs(entry - sl)
     delay_txt = f"⏱ Alert came ~{delay_min:.0f} min after the candle closed (entry = candle close)\n" if delay_min > 8 else ""
     exit_txt = (f"Square-off at {p.session_end} if TP/SL not hit." if p.eod_exit
-                else "No square-off: trade runs until SL / TP2.")
+                else "No square-off: trade runs until SL / TP1.")
     icon, word = ("🟢", "BUY") if side == 1 else ("🔴", "SELL")
     if not p.use_htf:
         why = f"{p.base_min}m flip • HTF filter off"
@@ -445,8 +503,7 @@ def format_signal(sym: str, side: int, ts: pd.Timestamp, entry: float, sl: float
         f"<i>{why}</i>\n\n"
         f"Entry: <b>{f(entry)}</b>\n"
         f"SL: <b>{f(sl)}</b>  (risk {f(risk)} • {risk / entry * 100:.2f}%)\n"
-        f"TP1 ({p.rr1:g}R): <b>{f(tp1)}</b>  → book 50%\n"
-        f"TP2 ({p.rr2:g}R): <b>{f(tp2)}</b>  → book 50%\n\n"
+        f"TP1 ({p.rr1:g}R): <b>{f(tp1)}</b>  → book 100%\n\n"
         f"Qty @ ₹{capital:,.0f} / {p.risk_pct:g}% risk: {qty}\n"
         f"Signal candle closed: {(ts + pd.Timedelta(minutes=p.base_min)).strftime('%H:%M')} IST\n"
         f"{delay_txt}"

@@ -24,7 +24,7 @@ on:
         type: boolean
         default: true
       extra_args:
-        description: "Extra flags, e.g. --rr2 2 --long-only --base-min 15 --htf-min 60"
+        description: "Extra flags, e.g. --rr1 1.0 --long-only --base-min 15 --htf-min 60"
         required: false
 
 jobs:

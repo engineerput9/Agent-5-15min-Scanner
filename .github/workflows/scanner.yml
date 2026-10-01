@@ -79,18 +79,22 @@ jobs:
           HTF_MIN: ${{ inputs.htf_min }}
           FRESH_MIN: ${{ inputs.fresh_min }}
           ENTRY_AFTER: ${{ inputs.entry_after }}
+          INCLUDE_COMMODITIES: "true"
           # Morning -> 12:32, afternoon -> 15:32, EOD cron -> empty (handled below)
           LOOP_UNTIL: ${{ github.event_name == 'schedule' && (github.event.schedule == '30 3 * * 1-5' && '12:32' || github.event.schedule == '50 6 * * 1-5' && '15:32' || '') || inputs.loop_until }}
           SCHEDULE_CRON: ${{ github.event.schedule }}
           # ---- optional tuning (uncomment to change) ----
           # CAPITAL: "100000"       # used for the quantity shown in alerts + EOD PnL
           # RISK_PCT: "1.0"
-          # RR1: "0.8"
-          # RR2: "1.5"
+          # RR1: "0.8"              # sole target RR (full size to TP1; no TP2)
           # MAX_AGE: "2"            # 15m flip must be within this many 15m candles (0 = any age)
           # HTF_TRIGGER: "true"     # also signal when 15m flips and 5m is already aligned
           # ONE_TRADE_DAY: "false"  # default: no daily limit
-          # EOD_EXIT: "false"       # default: no square-off, trades run until SL / TP2
+          # EOD_EXIT: "false"       # default: no square-off, trades run until SL / TP1
+          # INCLUDE_COMMODITIES: "true"  # also scan commodities.txt (Yahoo futures proxies)
+          # SESSION_START / SESSION_END auto-widen when futures are loaded; or set:
+          # SESSION_START: "09:00"
+          # SESSION_END: "23:30"
           # FRESH_MIN: "30"         # ignore signals older than this many minutes
           # COMMISSION: "0.03"      # % per side (EOD / backtest fill model)
           # SLIPPAGE_TICKS: "1"
