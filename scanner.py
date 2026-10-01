@@ -68,9 +68,14 @@ def main() -> None:
         return
 
     fresh_min = int(float(os.getenv("FRESH_MIN") or 60))      # ignore signals older than this
+    entry_after_raw = (os.getenv("ENTRY_AFTER") or "").strip()  # optional IST HH:MM cutoff today
+    entry_after = None
+    if entry_after_raw:
+        entry_after = pd.Timestamp(f"{today} {entry_after_raw}", tz=IST)
     capital = float(os.getenv("CAPITAL") or 100000)
     symbols = load_symbols()
-    print(f"{now:%Y-%m-%d %H:%M} IST | scanning {len(symbols)} symbols | {p.base_min}m / HTF {p.htf_min}m")
+    extra = f" | after {entry_after:%H:%M}" if entry_after is not None else ""
+    print(f"{now:%Y-%m-%d %H:%M} IST | scanning {len(symbols)} symbols | {p.base_min}m / HTF {p.htf_min}m | fresh<{fresh_min}m{extra}")
 
     data = fetch_many(symbols, p.base_min, "30d")
     print(f"  downloaded {len(data)}/{len(symbols)} symbols")
@@ -92,6 +97,8 @@ def main() -> None:
                 ts = t["entry_time"]
                 key = f"{sym}|{ts.isoformat()}"
                 if key in state["sent"]:
+                    continue
+                if entry_after is not None and ts < entry_after:
                     continue
                 age_min = (now - (ts + pd.Timedelta(minutes=p.base_min))).total_seconds() / 60
                 if age_min > fresh_min:

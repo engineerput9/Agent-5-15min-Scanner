@@ -27,6 +27,12 @@ on:
       htf_min:
         description: "Confirmation timeframe in minutes (blank = 15)"
         required: false
+      fresh_min:
+        description: "Ignore signals older than this many minutes (blank = code default 60)"
+        required: false
+      entry_after:
+        description: "Only alert entries at/after this IST HH:MM today, e.g. 12:50 (blank = all today)"
+        required: false
 
 permissions:
   contents: write
@@ -58,6 +64,8 @@ jobs:
           FORCE_RUN: ${{ inputs.force_run }}
           BASE_MIN: ${{ inputs.base_min }}
           HTF_MIN: ${{ inputs.htf_min }}
+          FRESH_MIN: ${{ inputs.fresh_min }}
+          ENTRY_AFTER: ${{ inputs.entry_after }}
           LOOP_UNTIL: ${{ github.event_name == 'schedule' && (github.event.schedule == '30 3 * * 1-5' && '12:32' || '15:32') || inputs.loop_until }}
           # ---- optional tuning (uncomment to change) ----
           # CAPITAL: "100000"       # used for the quantity shown in alerts
