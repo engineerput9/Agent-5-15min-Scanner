@@ -51,9 +51,9 @@ Python port of your Pine strategy **"Agent Confluence Backtest"**.
 
 ## End-of-day (EOD) Telegram summary
 Every Mon–Fri after the MCX evening window (~23:40 IST; or right after the last evening loop) the bot posts one message covering **that calendar day only**:
-- **Signals sent** – count of alerts in `state.json` for today (equities **and** commodities when `INCLUDE_COMMODITIES` is on; EOD lists both)
-- **Win rate / PnL** – overall, plus split by trigger: **5m flip** (15m already aligned) and **15m flip** (5m already aligned), each with count, W/L, win rate %, and net PnL
-- **Winners / losers** – per-trade list (entry time, side, symbol, PnL, R, outcome); if the day is busy, top winners and worst losers are shown and the rest are counted
+- **Signals sent** – count of alerts in `state.json` for today (equities **and** commodities when `INCLUDE_COMMODITIES` is on)
+- **Win rate / PnL** – **overall** plus **by trigger** (5m flip / 15m flip): count, W/L, win rate %, net PnL
+- **Equities vs MCX** – separate sections: 📈 Equities and 🛢️ MCX / Commodities, each with its own stats and winners/losers. Commodity lines use MCX-style names (`GOLD`, `SILVER`, `CRUDEOIL`, `COPPER`, `NATURALGAS`), not Yahoo tickers like `GC=F`
 - **Trigger storage** – `state.json` records `entry_type` (and side) when each alert is sent so EOD does not depend only on re-sim
 
 **Fill model (same as scanner / backtest):** entry at signal candle close ± slippage; **full size exits at TP1**; shared SL; commission default 0.03%/side; slippage 1 tick × 0.05; with `EOD_EXIT=false` (default) any trade still open is marked-to-market at the last available close (outcome `Still open at data end`). Capital / risk % match alert sizing (`CAPITAL`, `RISK_PCT`).

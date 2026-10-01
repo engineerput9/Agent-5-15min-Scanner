@@ -142,11 +142,9 @@ def backfill_entry_types(state: dict, trades: list[dict]) -> int:
 
 
 def _asset_class(sym: str) -> str:
-    """Equity/index vs commodity futures proxy (Yahoo =F / known NAMES)."""
+    """Equity/index vs commodity futures proxy (Yahoo =F)."""
     s = str(sym)
-    if s.endswith("=F") or s in (
-        "GC=F", "SI=F", "CL=F", "HG=F", "NG=F",
-    ):
+    if s.endswith("=F"):
         return "commodity"
     return "equity"
 
@@ -157,9 +155,9 @@ def _is_open_trade(t: dict) -> bool:
 
 
 def _trade_line(t: dict) -> str:
-    """One compact mobile-friendly line: time, side, symbol, PnL (R), outcome."""
+    """One compact mobile-friendly line: time, side, MCX/equity display name, PnL."""
     side = t.get("side", "?")
-    name = display_name(t["symbol"])
+    name = display_name(t["symbol"])  # GC=F → GOLD, etc.
     ts = pd.Timestamp(t["entry_time"]).strftime("%H:%M")
     pnl = float(t.get("pnl") or 0)
     r = float(t.get("r_multiple") or 0)
@@ -200,9 +198,40 @@ def _trigger_stats_line(label: str, rows: list[dict]) -> str:
     )
 
 
+def _class_stats_line(rows: list[dict]) -> str:
+    """Compact WR / net for an equities or commodities bucket."""
+    if not rows:
+        return "priced: <b>0</b>  —"
+    wins = [t for t in rows if float(t.get("pnl") or 0) > 0]
+    losses = [t for t in rows if float(t.get("pnl") or 0) <= 0]
+    net = sum(float(t.get("pnl") or 0) for t in rows)
+    wr = len(wins) / len(rows) * 100
+    openish = [t for t in rows if _is_open_trade(t)]
+    extra = f"  •  open/MTM: {len(openish)}" if openish else ""
+    return (
+        f"priced: <b>{len(rows)}</b>  •  {len(wins)}W/{len(losses)}L  •  "
+        f"<b>{wr:.1f}%</b>  •  Net ₹{net:+,.0f}{extra}"
+    )
+
+
+def _asset_block(title: str, rows: list[dict], limit: int) -> list[str]:
+    """One asset-class section: stats + winners/losers (or empty note)."""
+    lines = [f"<b>{title}</b>", _class_stats_line(rows)]
+    if not rows:
+        lines.append("<i>none today</i>")
+        return lines
+    wins = [t for t in rows if float(t.get("pnl") or 0) > 0]
+    losses = [t for t in rows if float(t.get("pnl") or 0) <= 0]
+    lines.append("")
+    lines.extend(_section_lines("✅ Winners", wins, limit, sort_desc=True))
+    lines.append("")
+    lines.extend(_section_lines("❌ Losers", losses, limit, sort_desc=False))
+    return lines
+
+
 def format_eod(today: str, trades: list[dict], p: Params, capital: float, bt: BT,
                max_each: int = 10) -> str:
-    """Build EOD Telegram HTML: overall + per-trigger WR/PnL + winners/losers."""
+    """Build EOD Telegram HTML: overall + by-trigger, then Equities vs MCX sections."""
     n = len(trades)
     priced = [t for t in trades if t.get("_priced", True) and t.get("outcome") != "NO_FILL_DATA"]
     openish = [t for t in priced if _is_open_trade(t)]
@@ -219,11 +248,18 @@ def format_eod(today: str, trades: list[dict], p: Params, capital: float, bt: BT
     fifteen = [t for t in priced if t.get("entry_type") == "15m flip"]
     other = [t for t in priced if t.get("entry_type") not in ("5m flip", "15m flip")]
 
+    eq_all = [t for t in trades if _asset_class(t.get("symbol", "")) == "equity"]
+    co_all = [t for t in trades if _asset_class(t.get("symbol", "")) == "commodity"]
+    eq_priced = [t for t in priced if _asset_class(t.get("symbol", "")) == "equity"]
+    co_priced = [t for t in priced if _asset_class(t.get("symbol", "")) == "commodity"]
+
     limit = max_each
     if len(priced) > 40:
         limit = min(limit, 6)
     elif len(priced) > 24:
         limit = min(limit, 8)
+    # Shared budget across two asset sections
+    per_class = max(3, limit // 2) if (eq_priced and co_priced) else limit
 
     lines = [
         f"📊 <b>EOD Summary – {today}</b>",
@@ -232,13 +268,8 @@ def format_eod(today: str, trades: list[dict], p: Params, capital: float, bt: BT
         "",
         f"Signals: <b>{n}</b>  •  priced: <b>{len(priced)}</b>"
         + (f"  •  open/MTM: {len(openish)}" if openish else ""),
+        f"Universe: equities <b>{len(eq_all)}</b>  •  commodities <b>{len(co_all)}</b>",
     ]
-    eq = [t for t in trades if _asset_class(t.get("symbol", "")) == "equity"]
-    co = [t for t in trades if _asset_class(t.get("symbol", "")) == "commodity"]
-    if eq or co:
-        lines.append(
-            f"Universe: equities <b>{len(eq)}</b>  •  commodities <b>{len(co)}</b>"
-        )
     if priced:
         lines += [
             f"Overall: <b>{wr:.1f}%</b>  ({len(wins)}W / {len(losses)}L)  •  "
@@ -254,17 +285,18 @@ def format_eod(today: str, trades: list[dict], p: Params, capital: float, bt: BT
     else:
         lines += ["Overall: —", "", "<b>By trigger</b>", "5m flip: 0  —", "15m flip: 0  —"]
 
-    if priced:
-        lines.append("")
-        lines.extend(_section_lines("✅ Winners", wins, limit, sort_desc=True))
-        lines.append("")
-        lines.extend(_section_lines("❌ Losers", losses, limit, sort_desc=False))
+    # Equities (main) and MCX / Commodities as distinct blocks
+    lines.append("")
+    lines.extend(_asset_block("📈 Equities", eq_priced, per_class))
+    lines.append("")
+    lines.extend(_asset_block("🛢️ MCX / Commodities", co_priced, per_class))
 
     lines += [
         "",
         f"<i>Same fill model as backtest: close±slip, full size at TP1, shared SL, "
         f"comm {bt.commission_pct:g}%/side, slip {bt.slippage_ticks:g}×{bt.tick}"
         f"{'; open=MTM' if not p.eod_exit else '; EOD square-off'}. "
+        f"Commodities shown with MCX-style names (GOLD, SILVER, …). "
         f"Trigger type from state at send (fallback: re-sim).</i>",
     ]
     unpriced = n - len(priced)
