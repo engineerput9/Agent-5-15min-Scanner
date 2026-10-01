@@ -114,7 +114,12 @@ def main() -> None:
                 qty = calc_qty(capital, entry, risk, p)
                 msg = format_signal(sym, side, ts, entry, sl, tp1, tp2, qty, p, capital, str(row["entry_type"]), age_min)
                 if tg_send(msg):
-                    state["sent"][key] = now.isoformat()
+                    # Persist trigger type so EOD can split 5m vs 15m flip without re-deriving
+                    state["sent"][key] = {
+                        "sent_at": now.isoformat(),
+                        "entry_type": str(row["entry_type"]),
+                        "side": t["side"],
+                    }
                     sent += 1
                     print(f"  {sym}: {t['side']} alert sent ({row['entry_type']})")
         except Exception as exc:  # noqa: BLE001

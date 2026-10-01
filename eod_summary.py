@@ -27,15 +27,26 @@ from backtest import BT, simulate
 from scanner import STATE_FILE, load_state, save_state
 
 
-def todays_sent_keys(state: dict, today: str) -> list[tuple[str, str, str]]:
-    """Return [(symbol, entry_iso), ...] for alerts sent on `today`."""
+def sent_meta(raw) -> dict:
+    """Normalize state['sent'][key] (legacy ISO string or dict with entry_type)."""
+    if isinstance(raw, dict):
+        return {
+            "sent_at": raw.get("sent_at") or raw.get("at") or "",
+            "entry_type": (raw.get("entry_type") or "").strip() or None,
+            "side": raw.get("side"),
+        }
+    return {"sent_at": str(raw) if raw is not None else "", "entry_type": None, "side": None}
+
+
+def todays_sent_keys(state: dict, today: str) -> list[tuple[str, str, str, dict]]:
+    """Return [(symbol, entry_iso, key, meta), ...] for alerts sent on `today`."""
     out = []
-    for key in state.get("sent", {}):
+    for key, raw in state.get("sent", {}).items():
         if "|" not in key:
             continue
         sym, ts = key.split("|", 1)
         if ts[:10] == today:
-            out.append((sym, ts, key))
+            out.append((sym, ts, key, sent_meta(raw)))
     out.sort(key=lambda x: x[1])
     return out
 
@@ -44,21 +55,20 @@ def match_trade(trades: list[dict], entry_iso: str):
     for t in trades:
         if t["entry_time"].isoformat() == entry_iso:
             return t
-        # tolerate minor tz/repr differences
         if pd.Timestamp(t["entry_time"]).isoformat() == pd.Timestamp(entry_iso).isoformat():
             return t
     return None
 
 
-def collect_day_trades(today: str, p: Params, bt: BT, sent: list[tuple[str, str, str]]) -> list[dict]:
-    """Re-simulate only symbols that had alerts today; keep trades matching sent keys."""
+def collect_day_trades(today: str, p: Params, bt: BT,
+                       sent: list[tuple[str, str, str, dict]]) -> list[dict]:
+    """Re-simulate symbols with alerts today; prefer state entry_type when present."""
     if not sent:
         return []
-    symbols = sorted({s for s, _, _ in sent})
+    symbols = sorted({s for s, _, _, _ in sent})
     print(f"EOD: re-simulating {len(symbols)} symbol(s) with {len(sent)} sent alert(s)")
     data = fetch_many(symbols, p.base_min, "30d")
     now = pd.Timestamp.now(tz=IST)
-    # Include a few minutes past session so the last candle is closed if available
     by_sym: dict[str, list[dict]] = {}
     for sym in symbols:
         df = data.get(sym)
@@ -76,13 +86,15 @@ def collect_day_trades(today: str, p: Params, bt: BT, sent: list[tuple[str, str,
             print(f"  {sym}: error {exc}")
 
     matched = []
-    for sym, entry_iso, key in sent:
+    for sym, entry_iso, key, meta in sent:
         trades = by_sym.get(sym) or []
         t = match_trade(trades, entry_iso)
         if t is None:
-            # Still list the alert even if we cannot price it (data gap / still forming)
             matched.append({
-                "symbol": sym, "side": "?", "entry_time": pd.Timestamp(entry_iso),
+                "symbol": sym,
+                "side": meta.get("side") or "?",
+                "entry_time": pd.Timestamp(entry_iso),
+                "entry_type": meta.get("entry_type") or "?",
                 "outcome": "NO_FILL_DATA", "pnl": 0.0, "r_multiple": 0.0,
                 "hit_tp1": False, "hit_tp2": False, "hit_sl": False,
                 "eod_exit": False, "fees": 0.0, "_key": key, "_priced": False,
@@ -90,10 +102,41 @@ def collect_day_trades(today: str, p: Params, bt: BT, sent: list[tuple[str, str,
             print(f"  {sym} @{entry_iso}: no matching simulated trade")
             continue
         row = dict(t)
+        # Prefer trigger type recorded at send time; fall back to re-sim
+        if meta.get("entry_type"):
+            row["entry_type"] = meta["entry_type"]
+        if meta.get("side") and not row.get("side"):
+            row["side"] = meta["side"]
         row["_key"] = key
         row["_priced"] = True
         matched.append(row)
     return matched
+
+
+def backfill_entry_types(state: dict, trades: list[dict]) -> int:
+    """Write entry_type/side from priced trades into state['sent'] (upgrade legacy strings)."""
+    n = 0
+    sent = state.setdefault("sent", {})
+    for t in trades:
+        key = t.get("_key")
+        if not key or key not in sent:
+            continue
+        et = t.get("entry_type")
+        if not et or et == "?":
+            continue
+        meta = sent_meta(sent[key])
+        if meta.get("entry_type") == et and meta.get("side") == t.get("side"):
+            if isinstance(sent[key], dict):
+                continue
+        sent[key] = {
+            "sent_at": meta.get("sent_at") or "",
+            "entry_type": str(et),
+            "side": t.get("side"),
+        }
+        n += 1
+    return n
+
+
 
 def _is_open_trade(t: dict) -> bool:
     o = str(t.get("outcome", "")).upper()
@@ -131,9 +174,23 @@ def _section_lines(title: str, rows: list[dict], limit: int, sort_desc: bool) ->
     return lines
 
 
+def _trigger_stats_line(label: str, rows: list[dict]) -> str:
+    """One line: count, W/L, win rate, net PnL for a trigger subset."""
+    if not rows:
+        return f"{label}: <b>0</b>  —"
+    wins = [t for t in rows if float(t.get("pnl") or 0) > 0]
+    losses = [t for t in rows if float(t.get("pnl") or 0) <= 0]
+    net = sum(float(t.get("pnl") or 0) for t in rows)
+    wr = len(wins) / len(rows) * 100
+    return (
+        f"{label}: <b>{len(rows)}</b>  •  {len(wins)}W/{len(losses)}L  •  "
+        f"<b>{wr:.1f}%</b>  •  ₹{net:+,.0f}"
+    )
+
+
 def format_eod(today: str, trades: list[dict], p: Params, capital: float, bt: BT,
-               max_each: int = 12) -> str:
-    """Build EOD Telegram HTML with explicit winners & losers lists."""
+               max_each: int = 10) -> str:
+    """Build EOD Telegram HTML: overall + per-trigger WR/PnL + winners/losers."""
     n = len(trades)
     priced = [t for t in trades if t.get("_priced", True) and t.get("outcome") != "NO_FILL_DATA"]
     openish = [t for t in priced if _is_open_trade(t)]
@@ -146,11 +203,15 @@ def format_eod(today: str, trades: list[dict], p: Params, capital: float, bt: BT
     win_pnl = sum(float(t.get("pnl") or 0) for t in wins)
     loss_pnl = sum(float(t.get("pnl") or 0) for t in losses)
 
+    five = [t for t in priced if t.get("entry_type") == "5m flip"]
+    fifteen = [t for t in priced if t.get("entry_type") == "15m flip"]
+    other = [t for t in priced if t.get("entry_type") not in ("5m flip", "15m flip")]
+
     limit = max_each
     if len(priced) > 40:
-        limit = min(limit, 8)
+        limit = min(limit, 6)
     elif len(priced) > 24:
-        limit = min(limit, 10)
+        limit = min(limit, 8)
 
     lines = [
         f"📊 <b>EOD Summary – {today}</b>",
@@ -162,12 +223,18 @@ def format_eod(today: str, trades: list[dict], p: Params, capital: float, bt: BT
     ]
     if priced:
         lines += [
-            f"Win rate: <b>{wr:.1f}%</b>  ({len(wins)}W / {len(losses)}L)",
-            f"Net PnL: <b>₹{net:,.0f}</b>  (W ₹{win_pnl:+,.0f} / L ₹{loss_pnl:+,.0f} • "
+            f"Overall: <b>{wr:.1f}%</b>  ({len(wins)}W / {len(losses)}L)  •  "
+            f"Net <b>₹{net:,.0f}</b>  (W ₹{win_pnl:+,.0f} / L ₹{loss_pnl:+,.0f} • "
             f"avg {avg_r:+.2f}R • fees ₹{fees:,.0f})",
+            "",
+            "<b>By trigger</b>",
+            _trigger_stats_line("5m flip (15m aligned)", five),
+            _trigger_stats_line("15m flip (5m aligned)", fifteen),
         ]
+        if other:
+            lines.append(_trigger_stats_line("other / unknown", other))
     else:
-        lines += ["Win rate: —", "Net PnL: —"]
+        lines += ["Overall: —", "", "<b>By trigger</b>", "5m flip: 0  —", "15m flip: 0  —"]
 
     if priced:
         lines.append("")
@@ -179,7 +246,8 @@ def format_eod(today: str, trades: list[dict], p: Params, capital: float, bt: BT
         "",
         f"<i>Same fill model as backtest: close±slip, 50% TP1/TP2, shared SL, "
         f"comm {bt.commission_pct:g}%/side, slip {bt.slippage_ticks:g}×{bt.tick}"
-        f"{'; open=MTM' if not p.eod_exit else '; EOD square-off'}.</i>",
+        f"{'; open=MTM' if not p.eod_exit else '; EOD square-off'}. "
+        f"Trigger type from state at send (fallback: re-sim).</i>",
     ]
     unpriced = n - len(priced)
     if unpriced:
@@ -189,6 +257,7 @@ def format_eod(today: str, trades: list[dict], p: Params, capital: float, bt: BT
     if len(msg) > 3900 and limit > 3:
         return format_eod(today, trades, p, capital, bt, max_each=limit - 1)
     return msg
+
 
 
 def already_sent(state: dict, today: str) -> bool:
@@ -241,6 +310,10 @@ def run(dry_run: bool = False, force: bool = False) -> int:
         trades = []
     else:
         trades = collect_day_trades(today, p, bt, sent)
+        n_bf = backfill_entry_types(state, trades)
+        if n_bf:
+            print(f"EOD: backfilled entry_type on {n_bf} state alert(s)")
+            save_state(state)
         msg = format_eod(today, trades, p, capital, bt)
 
     print("--- message preview ---")
