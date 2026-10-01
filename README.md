@@ -26,7 +26,7 @@ Python port of your Pine strategy **"Agent Confluence Backtest"**.
 | `requirements.txt` | Python packages |
 | `loop.py` | Runs the scanner right after every 5m candle close until a stop time; posts EOD summary when the afternoon session ends |
 | `eod_summary.py` | End-of-day Telegram summary (signal count, win rate, PnL) for alerts sent that day |
-| `.github/workflows/scanner.yml` | Live loop twice a day + daily EOD cron ~15:40 IST (or one-off / EOD by hand) |
+| `.github/workflows/scanner.yml` | Live loops (morning + afternoon equities/commodities; evening commodities-only through ~23:30 IST) + daily EOD ~23:40 IST |
 | `.github/workflows/backtest.yml` | Manual backtest run |
 
 ## Setup, step by step (phone-friendly)
@@ -39,13 +39,18 @@ Python port of your Pine strategy **"Agent Confluence Backtest"**.
    If your old workflow already used other secret names, either keep them and edit the two `env:` lines in `scanner.yml`, or add these names.
 4. **Allow commits**: *Settings → Actions → General → Workflow permissions → Read and write permissions → Save*. (Needed so the bot can save `state.json`, which prevents duplicate alerts.)
 5. **Test Telegram**: *Actions → Agent Scanner → Run workflow*, tick **test_mode**, Run. You should get a "✅ Agent Scanner test" message.
-6. **Go live**: nothing more to do. Two scheduled sessions start at about 09:00 and 12:20 IST (Mon–Fri) and scan right after every 5m candle closes (about 25 s later). If a morning start is ever missed, run the workflow by hand with **loop_until** = `15:32`.
-7. **EOD summary**: every trading day around **15:40 IST** (GitHub cron `10 10 * * 1-5` UTC) the workflow runs `eod_summary.py` and Telegrams a day summary: signals sent, win rate, and net PnL. The afternoon live loop also posts EOD when it finishes (~15:32); `state.json` `eod_sent` prevents duplicates. Manual: *Run workflow* → tick **eod_summary** (optional **eod_dry_run**).
+6. **Go live**: nothing more to do. Scheduled Mon–Fri sessions (all scan ~25 s after each 5m candle close):
+   - **09:00 IST** → loop until **12:32** (equities + commodities)
+   - **12:20 IST** → loop until **15:32** (equities + commodities, through NSE close)
+   - **15:50 IST** → loop until **19:47** (**commodities only**, MCX evening part 1)
+   - **19:50 IST** → loop until **23:32** (**commodities only**, MCX evening part 2 through ~23:30)
+   Evening is split into two jobs because GitHub Actions caps a single job at ~6 hours. If a start is missed, run the workflow by hand with **loop_until** (e.g. `15:32` or `23:32`); tick **commodities_only** for an evening-style run.
+7. **EOD summary**: every trading day around **23:40 IST** (GitHub cron `10 18 * * 1-5` UTC, after the MCX evening window) the workflow runs `eod_summary.py` and Telegrams a day summary: signals sent, win rate, and net PnL. The last evening loop also posts EOD when it finishes (~23:32); `state.json` `eod_sent` prevents duplicates. Manual: *Run workflow* → tick **eod_summary** (optional **eod_dry_run**).
 8. **Backtest**: *Actions → Agent Backtest → Run workflow*. Leave defaults (compare = on, telegram = on). Results arrive on Telegram (summary, chart, trades.csv) and under the run's **Artifacts** (`trades.csv`, `report.md`, `summary.json`, `equity.png`, `compare.csv`).
 
 
 ## End-of-day (EOD) Telegram summary
-Every Mon–Fri after NSE close the bot posts one message covering **that calendar day only**:
+Every Mon–Fri after the MCX evening window (~23:40 IST; or right after the last evening loop) the bot posts one message covering **that calendar day only**:
 - **Signals sent** – count of alerts in `state.json` for today
 - **Win rate / PnL** – overall, plus split by trigger: **5m flip** (15m already aligned) and **15m flip** (5m already aligned), each with count, W/L, win rate %, and net PnL
 - **Winners / losers** – per-trade list (entry time, side, symbol, PnL, R, outcome); if the day is busy, top winners and worst losers are shown and the rest are counted
@@ -54,10 +59,10 @@ Every Mon–Fri after NSE close the bot posts one message covering **that calend
 **Fill model (same as scanner / backtest):** entry at signal candle close ± slippage; **full size exits at TP1**; shared SL; commission default 0.03%/side; slippage 1 tick × 0.05; with `EOD_EXIT=false` (default) any trade still open is marked-to-market at the last available close (outcome `Still open at data end`). Capital / risk % match alert sizing (`CAPITAL`, `RISK_PCT`).
 
 **Triggers (recurring every trading day):**
-1. Scheduled Actions cron `10 10 * * 1-5` (~15:40 IST) → `python eod_summary.py`
-2. End of afternoon `loop.py` when `LOOP_UNTIL` ≥ session end (15:30)
+1. Scheduled Actions cron `10 18 * * 1-5` (~23:40 IST, after MCX evening) → `python eod_summary.py`
+2. End of the last evening `loop.py` when `LOOP_UNTIL` ≥ session end (23:30 with commodities; equity-only defaults stay 15:30)
 
-Dedup via `state.json` → `"eod_sent": "YYYY-MM-DD"`. Dry-run locally: `EOD_DRY_RUN=1 python eod_summary.py`.
+With `INCLUDE_COMMODITIES=true`, session end is 23:30, so the afternoon loop (until 15:32) does **not** post EOD — that waits for the evening window so commodity alerts are included. Dedup via `state.json` → `"eod_sent": "YYYY-MM-DD"`. Dry-run locally: `EOD_DRY_RUN=1 python eod_summary.py`.
 
 ## Reliable 5-minute scans (important)
 GitHub's built-in schedule is best-effort: runs are often delayed by 10-30+ minutes or skipped entirely, which looks like "alerts only when I run it manually". Fix: let a free external timer trigger the workflow at exact times.
@@ -94,6 +99,15 @@ Yahoo does **not** list India MCX continuous contracts. Use COMEX/NYMEX continuo
 Optional NSE bullion ETFs (cash hours only): `GOLDBEES`, `SILVERBEES`. Direct names like `MCXGOLD` / `GOLD.NS` **do not** work on Yahoo — they are skipped.
 
 Enable in the scanner with `INCLUDE_COMMODITIES=true` (merges `commodities.txt`). When any `=F` futures are loaded, session defaults widen to **09:00–23:30 IST** (approx. MCX hours) unless you override `SESSION_START` / `SESSION_END`. Equity-only runs stay at 09:15–15:30.
+
+**Evening schedule (GitHub Actions):** after NSE close, two **commodities-only** loops keep scanning through the MCX evening window (~23:30 IST):
+| Cron (UTC) | Starts (IST) | `LOOP_UNTIL` | Mode |
+|---|---|---|---|
+| `20 10 * * 1-5` | ~15:50 | 19:47 | `COMMODITIES_ONLY=true` |
+| `20 14 * * 1-5` | ~19:50 | 23:32 | `COMMODITIES_ONLY=true` |
+| `10 18 * * 1-5` | ~23:40 | — | EOD summary |
+
+`COMMODITIES_ONLY=true` loads only `commodities.txt` (skips the 210-symbol equity list outside cash hours). Manual evening: *Run workflow* → **commodities_only** + **loop_until** = `23:32`.
 
 ## Settings (env vars in `scanner.yml`, or flags in `backtest.py`)
 | Pine input | Env var | Backtest flag | Default |
@@ -148,7 +162,7 @@ Any always-on computer or server with Python 3.10+ works:
 ```
 pip install -r requirements.txt
 export TELEGRAM_BOT_TOKEN=xxxx TELEGRAM_CHAT_ID=xxxx
-python loop.py          # scans every 5m candle close until 15:32 IST; start it each morning (cron: 45 3 * * 1-5 UTC)
+python loop.py          # scans every 5m candle close until session end (+2m); start each morning (or set LOOP_UNTIL / COMMODITIES_ONLY)
 python backtest.py --compare --telegram
 ```
 `state.json` (de-duplication) is kept in the working folder.

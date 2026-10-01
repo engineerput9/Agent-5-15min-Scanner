@@ -1,13 +1,15 @@
 """
 eod_summary.py - End-of-day Telegram summary for signals sent today.
 
-Runs after NSE close (~15:30 IST). Uses the same simulate() / SL / TP1 /
-commission / slippage model as the live scanner and backtest so PnL and win rate
-match the engine that produced the alerts.
+Runs after the MCX evening window (~23:30 IST) when commodities are enabled
+(else after NSE close). Uses the same simulate() / SL / TP1 / commission /
+slippage model as the live scanner and backtest so PnL and win rate match the
+engine that produced the alerts.
 
 Trigger (recurring, Mon–Fri):
-  - GitHub Actions cron ~15:40 IST (see scanner.yml eod job), and/or
-  - end of the afternoon live loop (loop.py when LOOP_UNTIL >= session_end).
+  - GitHub Actions cron ~23:40 IST (see scanner.yml EOD cron), and/or
+  - end of the last live loop when LOOP_UNTIL >= session_end (evening ~23:32
+    with commodities; afternoon ~15:32 for equity-only).
 
 Dedup: state.json key "eod_sent" = YYYY-MM-DD once the summary has been posted.
 """

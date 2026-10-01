@@ -1,9 +1,10 @@
 """
 loop.py - runs the scanner every base-timeframe candle close (e.g. 09:20:25, 09:25:25 ...) until a stop time.
-Use it (a) inside GitHub Actions (scanner.yml starts it twice a day) or (b) on any always-on machine:
+Use it (a) inside GitHub Actions (scanner.yml: morning/afternoon + commodities evening sessions) or (b) on any always-on machine:
     export TELEGRAM_BOT_TOKEN=...  TELEGRAM_CHAT_ID=...
     python loop.py
 Env: LOOP_UNTIL="HH:MM" (IST, default = session end + 2 min), LOOP_DELAY_SEC (default 25).
+     COMMODITIES_ONLY=true for MCX evening (commodities.txt only).
 """
 from __future__ import annotations
 
@@ -73,8 +74,8 @@ def main() -> None:
         if _hash(scanner.STATE_FILE) != before:
             _push_state()
 
-    # After the afternoon session (LOOP_UNTIL at/after session_end), post EOD summary.
-    # Deduped in eod_summary via state.json "eod_sent"; morning loop (until ~12:32) skips.
+    # When LOOP_UNTIL is at/after session_end, post EOD summary (evening loop ~23:32 with
+    # commodities; equity-only afternoon ~15:32). Deduped via state.json "eod_sent".
     eh, em = (int(x) for x in p.session_end.split(":"))
     stop_hm = int(until[:2]) * 60 + int(until[3:5])
     if stop_hm >= eh * 60 + em:
