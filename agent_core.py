@@ -63,7 +63,7 @@ class Params:
     swing_lookback: int = 10
     atr_length: int = 14
     atr_mult: float = 1.0
-    rr1: float = 0.8             # sole target RR (full size)
+    rr1: float = 1.2             # sole target RR (full size)
     risk_pct: float = 1.0        # risk per trade, % of equity
     one_trade_day: bool = False  # no daily limit; a running trade simply continues (no overlap)
     htf_trigger: bool = False    # OFF by default: live scanner only fires on 5m RF flip when HTF already aligned (htf_age ≤ MAX_AGE). Set HTF_TRIGGER=true to also signal when HTF flips and chart TF is already aligned

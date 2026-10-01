@@ -6,7 +6,7 @@ Python port of your Pine strategy **"Agent Confluence Backtest"**.
 ## What it does
 - **Live signal (default):** only **5m flip with 15m aligned** — the 5m Range Filter flips on a closed candle while the 15m HTF regime already agrees and the 15m flipped recently (`htf_age` ≤ `MAX_AGE`, default 2). Telegram wording: *5m flip • 15m aligned ✓*.
 - **15m-flip trigger is OFF by default** (`HTF_TRIGGER=false`). That path (15m flips while 5m already aligned) is still in the engine for backtests / optional use; re-enable with `HTF_TRIGGER=true` in the workflow env (or Pine input). When enabled, Telegram says *15m flip • 5m already aligned ✓*.
-- **Levels** (same as Pine): SL = swing low/high of last 10 candles, or 1×ATR if that is tighter. **TP1 = 0.8R (sole target, full size)** — no TP2.
+- **Levels** (same as Pine): SL = swing low/high of last 10 candles, or 1×ATR if that is tighter. **TP1 = 1.2R (sole target, full size)** — no TP2.
 - **No daily limit, no square-off**: a symbol can signal any number of times, and a trade runs (also overnight) until SL or TP1. A new signal for the same symbol is not sent while its previous trade is still running.
 - **Rules**: signals only on closed candles. No end-of-day square-off: a trade runs (even overnight) until SL or TP1 is hit; **full size books at TP1**.
 - **Alert**: Entry, SL, TP1, risk-based quantity and why it fired (5m flip with HTF aligned by default).
@@ -120,7 +120,7 @@ Enable in the scanner with `INCLUDE_COMMODITIES=true` (merges `commodities.txt`)
 | Max age of HTF flip (HTF candles) | `MAX_AGE` | `--max-age` | 2 (0 = any) |
 | 15m flip + 5m already aligned trigger | `HTF_TRIGGER` | `--no-htf-trigger` | **off** (live default; set `HTF_TRIGGER=true` to re-enable) |
 | Swing lookback / ATR length / ATR mult | `SWING_LOOKBACK`, `ATR_LENGTH`, `ATR_MULT` | same | 10 / 14 / 1.0 |
-| Target 1 RR (sole target, full size) | `RR1` | `--rr1` | 0.8 |
+| Target 1 RR (sole target, full size) | `RR1` | `--rr1` | 1.2 |
 | Include commodities.txt | `INCLUDE_COMMODITIES` | — | off |
 | Session (auto-widens for futures) | `SESSION_START`, `SESSION_END` | — | 09:15 / 15:30 (equity) or 09:00 / 23:30 (with futures) |
 | Risk % of equity | `RISK_PCT` | `--risk-pct` | 1.0 |
