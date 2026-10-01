@@ -29,7 +29,10 @@ def load_state(today: str) -> dict:
         st = {}
     sent = st.get("sent", {})
     cutoff = (pd.Timestamp(today) - pd.Timedelta(days=3)).strftime("%Y-%m-%d")
-    return {"sent": {k: v for k, v in sent.items() if k.split("|")[1][:10] >= cutoff}}
+    out = {"sent": {k: v for k, v in sent.items() if k.split("|")[1][:10] >= cutoff}}
+    if "eod_sent" in st:
+        out["eod_sent"] = st["eod_sent"]
+    return out
 
 
 def save_state(st: dict) -> None:

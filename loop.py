@@ -71,6 +71,20 @@ def main() -> None:
             traceback.print_exc()
         if _hash(scanner.STATE_FILE) != before:
             _push_state()
+
+    # After the afternoon session (LOOP_UNTIL at/after session_end), post EOD summary.
+    # Deduped in eod_summary via state.json "eod_sent"; morning loop (until ~12:32) skips.
+    eh, em = (int(x) for x in p.session_end.split(":"))
+    stop_hm = int(until[:2]) * 60 + int(until[3:5])
+    if stop_hm >= eh * 60 + em:
+        print("afternoon loop ended — running EOD Telegram summary")
+        try:
+            import eod_summary
+            eod_summary.run(dry_run=False, force=False)
+            _push_state()
+        except Exception as exc:  # noqa: BLE001
+            print("EOD summary failed:", exc)
+            traceback.print_exc()
     print("loop finished")
 
 

@@ -11,6 +11,7 @@ Python port of your Pine strategy **"Agent Confluence Backtest"**.
 - **No daily limit, no square-off**: a symbol can signal any number of times, and a trade runs (also overnight) until SL or TP2. A new signal for the same symbol is not sent while its previous trade is still running.
 - **Rules**: signals only on closed candles. No end-of-day square-off: a trade runs (even overnight) until SL or TP2 is hit; TP1 books 50%.
 - **Alert**: Entry, SL, TP1, TP2, risk-based quantity and which of the two triggers fired.
+- **EOD summary**: after close each trading day, one Telegram message with that day's signal count, win rate, and PnL (same SL/TP fill model as the backtest).
 - **Backtest**: same engine as the scanner. 50% exits at TP1, 50% at TP2, shared SL, EOD exit, commission, slippage, intrabar fill model, gap fills.
 
 ## Files
@@ -22,8 +23,9 @@ Python port of your Pine strategy **"Agent Confluence Backtest"**.
 | `symbols.txt` | Full F&O list (210 symbols) |
 | `Agent_Confluence_Indicator.pine` | TradingView indicator (entry, SL, TP1, TP2 labels + alerts) |
 | `requirements.txt` | Python packages |
-| `loop.py` | Runs the scanner right after every 5m candle close until a stop time |
-| `.github/workflows/scanner.yml` | Starts the live loop twice a day (or a one-off scan by hand) |
+| `loop.py` | Runs the scanner right after every 5m candle close until a stop time; posts EOD summary when the afternoon session ends |
+| `eod_summary.py` | End-of-day Telegram summary (signal count, win rate, PnL) for alerts sent that day |
+| `.github/workflows/scanner.yml` | Live loop twice a day + daily EOD cron ~15:40 IST (or one-off / EOD by hand) |
 | `.github/workflows/backtest.yml` | Manual backtest run |
 
 ## Setup, step by step (phone-friendly)
@@ -37,7 +39,23 @@ Python port of your Pine strategy **"Agent Confluence Backtest"**.
 4. **Allow commits**: *Settings → Actions → General → Workflow permissions → Read and write permissions → Save*. (Needed so the bot can save `state.json`, which prevents duplicate alerts.)
 5. **Test Telegram**: *Actions → Agent Scanner → Run workflow*, tick **test_mode**, Run. You should get a "✅ Agent Scanner test" message.
 6. **Go live**: nothing more to do. Two scheduled sessions start at about 09:00 and 12:20 IST (Mon–Fri) and scan right after every 5m candle closes (about 25 s later). If a morning start is ever missed, run the workflow by hand with **loop_until** = `15:32`.
-7. **Backtest**: *Actions → Agent Backtest → Run workflow*. Leave defaults (compare = on, telegram = on). Results arrive on Telegram (summary, chart, trades.csv) and under the run's **Artifacts** (`trades.csv`, `report.md`, `summary.json`, `equity.png`, `compare.csv`).
+7. **EOD summary**: every trading day around **15:40 IST** (GitHub cron `10 10 * * 1-5` UTC) the workflow runs `eod_summary.py` and Telegrams a day summary: signals sent, win rate, and net PnL. The afternoon live loop also posts EOD when it finishes (~15:32); `state.json` `eod_sent` prevents duplicates. Manual: *Run workflow* → tick **eod_summary** (optional **eod_dry_run**).
+8. **Backtest**: *Actions → Agent Backtest → Run workflow*. Leave defaults (compare = on, telegram = on). Results arrive on Telegram (summary, chart, trades.csv) and under the run's **Artifacts** (`trades.csv`, `report.md`, `summary.json`, `equity.png`, `compare.csv`).
+
+
+## End-of-day (EOD) Telegram summary
+Every Mon–Fri after NSE close the bot posts one message covering **that calendar day only**:
+- **Signals sent** – count of alerts in `state.json` for today
+- **Win rate** – % of re-simulated trades with PnL > 0
+- **Net PnL** – sum of trade PnL (₹), plus average R
+
+**Fill model (same as scanner / backtest):** entry at signal candle close ± slippage; 50% exit at TP1 and 50% at TP2; shared SL; commission default 0.03%/side; slippage 1 tick × 0.05; with `EOD_EXIT=false` (default) any trade still open is marked-to-market at the last available close (outcome `Still open at data end`). Capital / risk % match alert sizing (`CAPITAL`, `RISK_PCT`).
+
+**Triggers (recurring every trading day):**
+1. Scheduled Actions cron `10 10 * * 1-5` (~15:40 IST) → `python eod_summary.py`
+2. End of afternoon `loop.py` when `LOOP_UNTIL` ≥ session end (15:30)
+
+Dedup via `state.json` → `"eod_sent": "YYYY-MM-DD"`. Dry-run locally: `EOD_DRY_RUN=1 python eod_summary.py`.
 
 ## Reliable 5-minute scans (important)
 GitHub's built-in schedule is best-effort: runs are often delayed by 10-30+ minutes or skipped entirely, which looks like "alerts only when I run it manually". Fix: let a free external timer trigger the workflow at exact times.
