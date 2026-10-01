@@ -1,0 +1,131 @@
+//@version=6
+// Indentation-free version: every statement is a single line, so mobile editors that auto-indent on paste cannot break it.
+indicator("Agent Confluence Indicator", overlay=true, max_labels_count=500)
+
+// ================= INPUTS =================
+per = input.int(100, "Sampling Period", minval=1, group="Range Filter")
+mult = input.float(3.0, "Range Multiplier", minval=0.1, group="Range Filter")
+useHtf = input.bool(true, "Require higher-TF confirmation (OFF = baseline)", group="Confluence")
+htfTF = input.timeframe("15", "Confirmation timeframe", group="Confluence")
+maxAge = input.int(2, "Max age of HTF signal in HTF bars (0 = any)", minval=0, group="Confluence")
+htfTrigger = input.bool(true, "Also signal when HTF flips and this TF is already aligned", group="Confluence")
+swingLookback = input.int(10, "Swing Lookback", group="Risk")
+atrLength = input.int(14, "ATR Length", group="Risk")
+atrMult = input.float(1.0, "ATR Multiplier", group="Risk")
+rr1 = input.float(0.8, "Target 1 RR", group="Risk")
+rr2 = input.float(1.5, "Target 2 RR", group="Risk")
+capital = input.float(100000, "Capital (for quantity shown)", group="Risk")
+riskPct = input.float(1.0, "Risk per trade % of capital", minval=0.1, group="Risk")
+oneTradeDay = input.bool(false, "Max one signal per day (OFF = no limit)", group="Rules")
+eodExit = input.bool(false, "Mark end-of-session exit (OFF = trade runs until SL/TP)", group="Rules")
+allowLong = input.bool(true, "Allow longs", group="Rules")
+allowShort = input.bool(true, "Allow shorts", group="Rules")
+showTrack = input.bool(true, "Show TP1 / TP2 / SL hit markers", group="Display")
+
+// ================= RANGE FILTER =================
+src = close
+wper = per * 2 - 1
+avrng = ta.ema(math.abs(src - src[1]), per)
+rng = ta.ema(avrng, wper) * mult
+var float rf = na
+prevRf = nz(rf[1], src)
+rf := src > prevRf ? ((src - rng) < prevRf ? prevRf : (src - rng)) : ((src + rng) > prevRf ? prevRf : (src + rng))
+var int upward = 0
+upward := rf > nz(rf[1]) ? upward + 1 : rf < nz(rf[1]) ? 0 : upward
+var int downward = 0
+downward := rf < nz(rf[1]) ? downward + 1 : rf > nz(rf[1]) ? 0 : downward
+longCond = src > rf and upward > 0
+shortCond = src < rf and downward > 0
+var int ci = 0
+ci := longCond ? 1 : shortCond ? -1 : ci
+longSig = longCond and nz(ci[1]) == -1
+shortSig = shortCond and nz(ci[1]) == 1
+var int age = 0
+age := ci != nz(ci[1]) ? 0 : age + 1
+
+// ================= HIGHER-TF CONFIRMATION (last completed HTF bar, no repaint) =================
+[htfBias, htfAge] = request.security(syminfo.tickerid, htfTF, [ci[1], age[1]], lookahead=barmerge.lookahead_on)
+ageOk = maxAge == 0 or htfAge <= maxAge
+htfLong = not useHtf or (htfBias == 1 and ageOk)
+htfShort = not useHtf or (htfBias == -1 and ageOk)
+newDay = ta.change(time("D")) != 0
+flipLong = htfTrigger and useHtf and htfBias == 1 and nz(htfBias[1]) == -1 and ci == 1 and not newDay
+flipShort = htfTrigger and useHtf and htfBias == -1 and nz(htfBias[1]) == 1 and ci == -1 and not newDay
+
+// ================= RISK LEVELS =================
+atr = ta.atr(atrLength)
+prevHigh = ta.highest(high[1], swingLookback)
+prevLow = ta.lowest(low[1], swingLookback)
+okData = not na(atr) and not na(prevHigh) and not na(prevLow)
+slLong = (close - prevLow) < atr * atrMult ? close - atr * atrMult : prevLow
+slShort = (prevHigh - close) < atr * atrMult ? close + atr * atrMult : prevHigh
+riskLong = close - slLong
+riskShort = slShort - close
+
+// ================= TRADE TRACKER STATE =================
+var int side = 0
+var int entryBar = na
+var float entryPx = na
+var float slLv = na
+var float tp1Lv = na
+var float tp2Lv = na
+var bool t1Done = false
+
+// ---- did the open signal hit SL / TP1 / TP2 / session end on this bar? (SL assumed first if SL and TP share a bar) ----
+active = side != 0 and bar_index > entryBar
+hitSL = active and (side == 1 ? low <= slLv : high >= slLv)
+hitT1 = active and not hitSL and not t1Done and (side == 1 ? high >= tp1Lv : low <= tp1Lv)
+hitT2 = active and not hitSL and (side == 1 ? high >= tp2Lv : low <= tp2Lv)
+isEod = active and not hitSL and not hitT2 and eodExit and session.islastbar_regular
+closedNow = hitSL or hitT2 or isEod
+
+lblSL = hitSL and showTrack ? label.new(bar_index, slLv, t1Done ? "SL (after TP1)" : "SL ✗", style=label.style_label_down, color=color.new(color.red, 20), textcolor=color.white, size=size.small) : na
+lblT1 = hitT1 and showTrack ? label.new(bar_index, tp1Lv, "TP1 ✓", style=label.style_label_up, color=color.new(color.teal, 20), textcolor=color.white, size=size.small) : na
+lblT2 = hitT2 and showTrack ? label.new(bar_index, tp2Lv, "TP2 ✓", style=label.style_label_up, color=color.new(color.green, 10), textcolor=color.white, size=size.small) : na
+lblEod = isEod and showTrack ? label.new(bar_index, close, "EOD exit", style=label.style_label_left, color=color.gray, textcolor=color.white, size=size.small) : na
+
+t1Done := hitT1 ? true : t1Done
+side := closedNow ? 0 : side
+
+// ================= ENTRY SIGNALS =================
+var bool traded = false
+tradedPrev = newDay ? false : traded
+canTrade = side == 0 and (not oneTradeDay or not tradedPrev)
+noEntryNow = eodExit and session.islastbar_regular
+longOk = ((longSig and htfLong) or flipLong) and allowLong and canTrade and okData and barstate.isconfirmed and not noEntryNow
+shortOk = ((shortSig and htfShort) or flipShort) and allowShort and canTrade and okData and barstate.isconfirmed and not noEntryNow
+traded := tradedPrev or longOk or shortOk
+newEntry = longOk or shortOk
+
+slSel = longOk ? slLong : slShort
+riskSel = longOk ? riskLong : riskShort
+t1Sel = longOk ? close + riskSel * rr1 : close - riskSel * rr1
+t2Sel = longOk ? close + riskSel * rr2 : close - riskSel * rr2
+qty = math.max(math.floor(math.min(capital * riskPct / 100 / riskSel, capital / close)), 1)
+
+side := longOk ? 1 : shortOk ? -1 : side
+entryBar := newEntry ? bar_index : entryBar
+entryPx := newEntry ? close : entryPx
+slLv := newEntry ? slSel : slLv
+tp1Lv := newEntry ? t1Sel : tp1Lv
+tp2Lv := newEntry ? t2Sel : tp2Lv
+t1Done := newEntry ? false : t1Done
+
+txt = (longOk ? "BUY @ " : "SELL @ ") + str.tostring(close, format.mintick) + "\nSL @ " + str.tostring(slSel, format.mintick) + "\nTP1 @ " + str.tostring(t1Sel, format.mintick) + "\nTP2 @ " + str.tostring(t2Sel, format.mintick) + "\nQty " + str.tostring(qty) + " (" + str.tostring(riskPct, "#.##") + "% risk)"
+lblEntry = newEntry ? label.new(bar_index, longOk ? low : high, txt, style=label.style_label_left, color=longOk ? color.green : color.red, textcolor=color.white) : na
+
+alertcondition(longOk, "Agent BUY", "BUY {{ticker}} @ {{close}}")
+alertcondition(shortOk, "Agent SELL", "SELL {{ticker}} @ {{close}}")
+
+// ================= PLOTS =================
+showLv = side != 0 or closedNow
+plot(showLv ? entryPx : na, "Entry", color=color.new(color.gray, 20), style=plot.style_linebr)
+plot(showLv ? slLv : na, "SL", color=color.red, style=plot.style_linebr)
+plot(showLv ? tp1Lv : na, "TP1", color=color.teal, style=plot.style_linebr)
+plot(showLv ? tp2Lv : na, "TP2", color=color.green, style=plot.style_linebr)
+plotshape(longSig and htfLong, "Long confluence", shape.triangleup, location.belowbar, color.green, size=size.tiny)
+plotshape(flipLong, "Long: HTF flip", shape.diamond, location.belowbar, color.lime, size=size.tiny)
+plotshape(shortSig and htfShort, "Short confluence", shape.triangledown, location.abovebar, color.red, size=size.tiny)
+plotshape(flipShort, "Short: HTF flip", shape.diamond, location.abovebar, color.orange, size=size.tiny)
+bgcolor(useHtf ? (htfBias == 1 ? color.new(color.green, 92) : htfBias == -1 ? color.new(color.red, 92) : na) : na)
+plot(rf, "Range filter", color=ci == 1 ? color.new(color.green, 40) : color.new(color.red, 40), linewidth=1)

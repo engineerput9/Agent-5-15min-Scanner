@@ -1,0 +1,57 @@
+name: Agent Backtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbols:
+        description: "Comma list, e.g. NIFTY,BANKNIFTY,RELIANCE (blank = symbols.txt)"
+        required: false
+      compare:
+        description: "Compare HTF off / on / max-age variants"
+        type: boolean
+        default: true
+      be_after_tp1:
+        description: "Move SL to breakeven after TP1"
+        type: boolean
+        default: false
+      ambiguity:
+        description: "If SL and TP are both inside one candle"
+        type: choice
+        options: [tv, sl_first, tp_first]
+        default: tv
+      telegram:
+        description: "Send summary + chart to Telegram"
+        type: boolean
+        default: true
+      extra_args:
+        description: "Extra flags, e.g. --rr2 2 --long-only --base-min 15 --htf-min 60"
+        required: false
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run backtest
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SYMBOLS_IN: ${{ inputs.symbols }}
+          EXTRA: ${{ inputs.extra_args }}
+        run: |
+          ARGS="--ambiguity ${{ inputs.ambiguity }}"
+          [ -n "$SYMBOLS_IN" ] && ARGS="$ARGS --symbols $SYMBOLS_IN"
+          [ "${{ inputs.compare }}" = "true" ] && ARGS="$ARGS --compare"
+          [ "${{ inputs.be_after_tp1 }}" = "true" ] && ARGS="$ARGS --be-after-tp1"
+          [ "${{ inputs.telegram }}" = "true" ] && ARGS="$ARGS --telegram"
+          python backtest.py $ARGS $EXTRA
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backtest-results
+          path: out/

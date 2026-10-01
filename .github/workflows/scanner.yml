@@ -1,0 +1,81 @@
+name: Agent Scanner
+
+# Scheduled: two long-running sessions per day (09:00 IST and 12:20 IST). Inside each session loop.py
+# scans right after every 5-minute candle closes. This is far more reliable than a "*/5" cron, which
+# GitHub often delays or skips.
+# Manual run: single scan (or tick test_mode). Fill loop_until (e.g. 15:32) to start a live loop by hand.
+on:
+  schedule:
+    - cron: "30 3 * * 1-5"
+    - cron: "50 6 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: "Only send a Telegram test message"
+        type: boolean
+        default: false
+      force_run:
+        description: "Ignore the market-hours guard"
+        type: boolean
+        default: false
+      loop_until:
+        description: "Optional: keep scanning every 5 min until this IST time, e.g. 15:32 (blank = one scan)"
+        required: false
+      base_min:
+        description: "Chart timeframe in minutes (blank = 5)"
+        required: false
+      htf_min:
+        description: "Confirmation timeframe in minutes (blank = 15)"
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: agent-scanner
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run scanner
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TEST_MODE: ${{ inputs.test_mode }}
+          FORCE_RUN: ${{ inputs.force_run }}
+          BASE_MIN: ${{ inputs.base_min }}
+          HTF_MIN: ${{ inputs.htf_min }}
+          LOOP_UNTIL: ${{ github.event_name == 'schedule' && (github.event.schedule == '30 3 * * 1-5' && '12:32' || '15:32') || inputs.loop_until }}
+          # ---- optional tuning (uncomment to change) ----
+          # CAPITAL: "100000"       # used for the quantity shown in alerts
+          # RISK_PCT: "1.0"
+          # RR1: "0.8"
+          # RR2: "1.5"
+          # MAX_AGE: "2"            # 15m flip must be within this many 15m candles (0 = any age)
+          # HTF_TRIGGER: "true"     # also signal when 15m flips and 5m is already aligned
+          # ONE_TRADE_DAY: "false"  # default: no daily limit
+          # EOD_EXIT: "false"       # default: no square-off, trades run until SL / TP2
+          # FRESH_MIN: "30"         # ignore signals older than this many minutes
+        run: |
+          if [ -n "$LOOP_UNTIL" ]; then python loop.py; else python scanner.py; fi
+
+      - name: Save de-duplication state
+        if: always()
+        run: |
+          git config user.name "agent-scanner-bot"
+          git config user.email "agent-scanner-bot@users.noreply.github.com"
+          git add state.json
+          git diff --cached --quiet || (git commit -m "scanner state" && git pull --rebase --autostash && git push)
