@@ -76,7 +76,7 @@ GitHub's built-in schedule is best-effort: runs are often delayed by 10-30+ minu
      `{"ref":"master","inputs":{"commodities_only":true,"loop_until":"23:32"}}`
      (do **not** put `loop_until` on the every-5-minute daytime cron — that would stack long-running jobs).
    - Save, then press *Test run*: a response of **204** means it worked, and a new "Agent Scanner" run appears in the Actions tab.
-3. **Check it**: *Run workflow* → tick **heartbeat** (optional; default off). Each scan then sends a small "💓 Scan OK" Telegram so you can confirm cron is firing every 5 minutes; leave it unticked once you trust the schedule.
+3. **Check it**: the workflow enables `HEARTBEAT: "true"`, so each scan sends a small "💓 Scan OK" Telegram while you verify cron is firing every 5 minutes. After a few days of confirming the schedule, change it to `"false"` (or remove the line) to stop the heartbeat messages.
 4. **Also check** *Actions → Agent Scanner*: the "Event" of each run says `schedule` or `workflow_dispatch`. If the workflow file is not on the default branch, or the repo was inactive for 60 days, GitHub stops `schedule` runs.
 5. **Minutes**: public repos have unlimited free Actions minutes. A private repo on the Free plan gets 2,000 minutes a month, and a full day of 5-minute scans uses roughly 100-150, so it would run out in about two weeks. If your repo is private, make it public (the Telegram token stays secret) or use a paid plan.
 
