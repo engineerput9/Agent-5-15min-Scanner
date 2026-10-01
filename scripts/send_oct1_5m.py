@@ -1,5 +1,10 @@
 import csv
+import os
+import sys
+
 import pandas as pd
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from agent_core import Params, format_signal, tg_send
 
 CSV = "oct1_5m_trades.csv"
