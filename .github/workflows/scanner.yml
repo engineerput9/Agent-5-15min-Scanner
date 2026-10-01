@@ -1,20 +1,25 @@
 name: Agent Scanner
 
 # Scheduled sessions (Mon–Fri, times IST = UTC+5:30):
-#   09:00 → loop until 12:32   equities
-#   12:20 → loop until 15:32   equities (NSE close)
-#   15:40                      EOD Telegram summary (equities)
+#   09:00 → loop until 12:32   equities + commodities
+#   12:20 → loop until 15:32   equities + commodities (NSE close)
+#   15:50 → loop until 19:47   commodities only (MCX evening, part 1)
+#   19:50 → loop until 23:32   commodities only (MCX evening, part 2 → ~23:30)
+#   23:40                      EOD Telegram summary (after MCX evening)
 #
-# Yahoo US futures proxies for MCX are paused. The manual commodities_only input remains
-# available for future broker-feed wiring, but no scheduled job enables it.
+# Why split evening: GitHub Actions jobs cap ~6h (timeout-minutes: 355). One loop from
+# equity open through 23:30 would exceed that; two post-close commodities-only jobs stay reliable.
 # Long-running loop.py (scan ~25s after each 5m close) is far more reliable than a "*/5" cron.
-# The afternoon loop and EOD cron both may run the summary; state.json "eod_sent" dedupes.
+# Afternoon loop does not post EOD when session_end is 23:30 (commodities); EOD cron + end of
+# the last evening loop do (state.json "eod_sent" dedupes).
 # Manual: single scan, test_mode, eod_summary, or set loop_until (e.g. 23:32) for a live loop.
 on:
   schedule:
     - cron: "30 3 * * 1-5"
     - cron: "50 6 * * 1-5"
-    - cron: "10 10 * * 1-5"
+    - cron: "20 10 * * 1-5"
+    - cron: "20 14 * * 1-5"
+    - cron: "10 18 * * 1-5"
   workflow_dispatch:
     inputs:
       test_mode:
@@ -37,7 +42,7 @@ on:
         description: "Optional: keep scanning every 5 min until this IST time, e.g. 15:32 or 23:32 (blank = one scan)"
         required: false
       commodities_only:
-        description: "Legacy manual override: scan commodities.txt (paused Yahoo proxies)"
+        description: "Scan only commodities.txt (MCX evening / manual evening loops)"
         type: boolean
         default: false
       base_min:
@@ -92,12 +97,11 @@ jobs:
           FRESH_MIN: ${{ inputs.fresh_min }}
           ENTRY_AFTER: ${{ inputs.entry_after }}
           HEARTBEAT: ${{ inputs.heartbeat }}
-          # Yahoo US futures proxies are paused; equity live scans stay enabled.
-          INCLUDE_COMMODITIES: "false"
-          # Manual commodities_only is retained for future broker-feed wiring; no cron enables it.
-          COMMODITIES_ONLY: ${{ inputs.commodities_only == true && 'true' || 'false' }}
-          # Morning 12:32 | afternoon 15:32 | EOD cron has no loop
-          LOOP_UNTIL: ${{ github.event_name == 'schedule' && (github.event.schedule == '30 3 * * 1-5' && '12:32' || github.event.schedule == '50 6 * * 1-5' && '15:32' || '') || inputs.loop_until }}
+          INCLUDE_COMMODITIES: "true"
+          # Evening crons (and manual commodities_only) skip the 210-symbol equity list
+          COMMODITIES_ONLY: ${{ (github.event_name == 'schedule' && (github.event.schedule == '20 10 * * 1-5' || github.event.schedule == '20 14 * * 1-5')) && 'true' || (inputs.commodities_only == true && 'true' || 'false') }}
+          # Morning 12:32 | afternoon 15:32 | evening A 19:47 | evening B 23:32 | EOD cron empty
+          LOOP_UNTIL: ${{ github.event_name == 'schedule' && (github.event.schedule == '30 3 * * 1-5' && '12:32' || github.event.schedule == '50 6 * * 1-5' && '15:32' || github.event.schedule == '20 10 * * 1-5' && '19:47' || github.event.schedule == '20 14 * * 1-5' && '23:32' || '') || inputs.loop_until }}
           SCHEDULE_CRON: ${{ github.event.schedule }}
           # ---- optional tuning (uncomment to change) ----
           # CAPITAL: "100000"       # used for the quantity shown in alerts + EOD PnL
@@ -107,7 +111,7 @@ jobs:
           # HTF_TRIGGER: "true"     # also signal when 15m flips and 5m is already aligned
           # ONE_TRADE_DAY: "false"  # default: no daily limit
           # EOD_EXIT: "false"       # default: no square-off, trades run until SL / TP1
-          # INCLUDE_COMMODITIES: "false" # Yahoo US futures proxies are paused
+          # INCLUDE_COMMODITIES: "true"  # also scan commodities.txt (Yahoo futures proxies)
           # SESSION_START / SESSION_END auto-widen when futures are loaded; or set:
           # SESSION_START: "09:00"
           # SESSION_END: "23:30"
@@ -116,8 +120,8 @@ jobs:
           # SLIPPAGE_TICKS: "1"
         run: |
           set -e
-          # Daily EOD: scheduled cron 10 10 * * 1-5 (~15:40 IST, after equities) or manual eod_summary
-          if [ "$SCHEDULE_CRON" = "10 10 * * 1-5" ] || [ "$EOD_SUMMARY" = "true" ]; then
+          # Daily EOD: scheduled cron 10 18 * * 1-5 (~23:40 IST, after MCX) or manual eod_summary
+          if [ "$SCHEDULE_CRON" = "10 18 * * 1-5" ] || [ "$EOD_SUMMARY" = "true" ]; then
             python eod_summary.py
           elif [ -n "$LOOP_UNTIL" ]; then
             python loop.py

@@ -26,7 +26,7 @@ Python port of your Pine strategy **"Agent Confluence Backtest"**.
 | `requirements.txt` | Python packages |
 | `loop.py` | Runs the scanner right after every 5m candle close until a stop time; posts EOD summary when the afternoon session ends |
 | `eod_summary.py` | End-of-day Telegram summary (signal count, win rate, PnL) for alerts sent that day |
-| `.github/workflows/scanner.yml` | Live equity loops (morning + afternoon) + daily EOD ~15:40 IST |
+| `.github/workflows/scanner.yml` | Live loops (morning + afternoon equities/commodities; evening commodities-only through ~23:30 IST) + daily EOD ~23:40 IST |
 | `.github/workflows/backtest.yml` | Manual backtest run |
 
 ## Setup, step by step (phone-friendly)
@@ -40,16 +40,18 @@ Python port of your Pine strategy **"Agent Confluence Backtest"**.
 4. **Allow commits**: *Settings → Actions → General → Workflow permissions → Read and write permissions → Save*. (Needed so the bot can save `state.json`, which prevents duplicate alerts.)
 5. **Test Telegram**: *Actions → Agent Scanner → Run workflow*, tick **test_mode**, Run. You should get a "✅ Agent Scanner test" message.
 6. **Go live**: nothing more to do. Scheduled Mon–Fri sessions (all scan ~25 s after each 5m candle close):
-   - **09:00 IST** → loop until **12:32** (equities)
-   - **12:20 IST** → loop until **15:32** (equities, through NSE close)
-   Yahoo US futures proxies are paused, so no scheduled commodity evening loops run. If a start is missed, run the workflow by hand with **loop_until** (e.g. `12:32` or `15:32`).
-7. **EOD summary**: every trading day around **15:40 IST** (GitHub cron `10 10 * * 1-5` UTC, after the equity session) the workflow runs `eod_summary.py` and Telegrams a day summary: signals sent, win rate, and net PnL. The afternoon loop also posts EOD when it finishes (~15:32); `state.json` `eod_sent` prevents duplicates. Manual: *Run workflow* → tick **eod_summary** (optional **eod_dry_run**).
+   - **09:00 IST** → loop until **12:32** (equities + commodities)
+   - **12:20 IST** → loop until **15:32** (equities + commodities, through NSE close)
+   - **15:50 IST** → loop until **19:47** (**commodities only**, MCX evening part 1)
+   - **19:50 IST** → loop until **23:32** (**commodities only**, MCX evening part 2 through ~23:30)
+   Evening is split into two jobs because GitHub Actions caps a single job at ~6 hours. If a start is missed, run the workflow by hand with **loop_until** (e.g. `15:32` or `23:32`); tick **commodities_only** for an evening-style run.
+7. **EOD summary**: every trading day around **23:40 IST** (GitHub cron `10 18 * * 1-5` UTC, after the MCX evening window) the workflow runs `eod_summary.py` and Telegrams a day summary: signals sent, win rate, and net PnL. The last evening loop also posts EOD when it finishes (~23:32); `state.json` `eod_sent` prevents duplicates. Manual: *Run workflow* → tick **eod_summary** (optional **eod_dry_run**).
 8. **Backtest**: *Actions → Agent Backtest → Run workflow*. Leave defaults (compare = on, telegram = on). Results arrive on Telegram (summary, chart, trades.csv) and under the run's **Artifacts** (`trades.csv`, `report.md`, `summary.json`, `equity.png`, `compare.csv`).
 
 
 ## End-of-day (EOD) Telegram summary
-Every Mon–Fri after the equity session (~15:40 IST; or right after the afternoon loop) the bot posts one message covering **that calendar day only**:
-- **Signals sent** – count of alerts in `state.json` for today (equities; commodities remain paused)
+Every Mon–Fri after the MCX evening window (~23:40 IST; or right after the last evening loop) the bot posts one message covering **that calendar day only**:
+- **Signals sent** – count of alerts in `state.json` for today (equities **and** commodities when `INCLUDE_COMMODITIES` is on)
 - **Win rate / PnL** – **overall** plus **by trigger** (5m flip / 15m flip): count, W/L, win rate %, net PnL
 - **Equities vs MCX** – separate sections: 📈 Equities and 🛢️ MCX / Commodities, each with its own stats and winners/losers. Commodity lines use MCX-style names (`GOLD`, `SILVER`, `CRUDEOIL`, `COPPER`, `NATURALGAS`), not Yahoo tickers like `GC=F`
 - **Trigger storage** – `state.json` records `entry_type` (and side) when each alert is sent so EOD does not depend only on re-sim
@@ -57,10 +59,10 @@ Every Mon–Fri after the equity session (~15:40 IST; or right after the afterno
 **Fill model (same as scanner / backtest):** entry at signal candle close ± slippage; **full size exits at TP1**; shared SL; commission default 0.03%/side; slippage 1 tick × 0.05; with `EOD_EXIT=false` (default) any trade still open is marked-to-market at the last available close (outcome `Still open at data end`). Capital / risk % match alert sizing (`CAPITAL`, `RISK_PCT`).
 
 **Triggers (recurring every trading day):**
-1. Scheduled Actions cron `10 10 * * 1-5` (~15:40 IST, after the equity session) → `python eod_summary.py`
-2. End of the afternoon `loop.py` when `LOOP_UNTIL` ≥ session end (~15:32 for equity-only defaults)
+1. Scheduled Actions cron `10 18 * * 1-5` (~23:40 IST, after MCX evening) → `python eod_summary.py`
+2. End of the last evening `loop.py` when `LOOP_UNTIL` ≥ session end (23:30 with commodities; equity-only defaults stay 15:30)
 
-With commodities paused (`INCLUDE_COMMODITIES=false`), the equity afternoon loop posts EOD at the end of the equity session. Dedup via `state.json` → `"eod_sent": "YYYY-MM-DD"`. Dry-run locally: `EOD_DRY_RUN=1 python eod_summary.py`.
+With `INCLUDE_COMMODITIES=true`, session end is 23:30, so the afternoon loop (until 15:32) does **not** post EOD — that waits for the evening window so commodity alerts are included. Dedup via `state.json` → `"eod_sent": "YYYY-MM-DD"`. Dry-run locally: `EOD_DRY_RUN=1 python eod_summary.py`.
 
 ## Reliable 5-minute scans (important)
 GitHub's built-in schedule is best-effort: runs are often delayed by 10-30+ minutes or skipped entirely, which looks like "alerts only when I run it manually". Fix: let a free external timer trigger the workflow at exact times.
@@ -71,7 +73,9 @@ GitHub's built-in schedule is best-effort: runs are often delayed by 10-30+ minu
    - Schedule: *Custom* → time zone **Asia/Kolkata**; Days of week Mon–Fri; Hours 9–15; Minutes `1,6,11,16,21,26,31,36,41,46,51,56` (one minute after each 5m candle closes, so Yahoo has the candle).
    - *Advanced*: Request method **POST**; Headers: `Authorization: Bearer YOUR_TOKEN`, `Accept: application/vnd.github+json`, `Content-Type: application/json`; Request body: `{"ref":"master"}` (this repo’s default branch).
 
-   - Commodity evening coverage is paused. Do not enable `commodities_only` until a broker-backed MCX feed replaces the Yahoo US proxies.
+   - Optional **evening MCX** coverage: either rely on the built-in schedule jobs (15:50 → 19:47 and 19:50 → 23:32, commodities-only), or one-shot dispatch at ~15:50 IST with body
+     `{"ref":"master","inputs":{"commodities_only":true,"loop_until":"23:32"}}`
+     (do **not** put `loop_until` on the every-5-minute daytime cron — that would stack long-running jobs).
    - Save, then press *Test run*: a response of **204** means it worked, and a new "Agent Scanner" run appears in the Actions tab.
 3. **Check it**: *Run workflow* → tick **heartbeat** (optional; default off). Each scan then sends a small "💓 Scan OK" Telegram so you can confirm cron is firing every 5 minutes; leave it unticked once you trust the schedule.
 4. **Also check** *Actions → Agent Scanner*: the "Event" of each run says `schedule` or `workflow_dispatch`. If the workflow file is not on the default branch, or the repo was inactive for 60 days, GitHub stops `schedule` runs.
@@ -83,9 +87,7 @@ GitHub's built-in schedule is best-effort: runs are often delayed by 10-30+ minu
 Downloads are batched (40 symbols per Yahoo call), so a full scan should take about a minute rather than several.
 
 ### MCX / commodities
-**Commodity scanning is currently paused.** MCX 5m requires a broker feed such as Angel One, Fyers, or similar; Yahoo US futures proxies are not accepted as MCX terms/prices and remain disabled. Keep `commodities.txt` and the `NAMES` map in `agent_core.py` for later broker wiring.
-
-Yahoo does **not** list India MCX continuous contracts. The existing COMEX/NYMEX tickers in `commodities.txt` are retained only as paused proxies (same as TradingView `GC1!` / `CL1!` style feeds):
+Yahoo does **not** list India MCX continuous contracts. Use the Yahoo US COMEX/NYMEX continuous futures in `commodities.txt` only as price proxies (same as TradingView `GC1!` / `CL1!` style feeds). These are **not a true MCX INR feed**; Telegram labels them with MCX-style names via `NAMES` in `agent_core.py`. Verified working on Yahoo (5m):
 
 | Yahoo ticker | Alert / display (MCX-style) |
 |---|---|
@@ -95,9 +97,18 @@ Yahoo does **not** list India MCX continuous contracts. The existing COMEX/NYMEX
 | `HG=F` | COPPER |
 | `NG=F` | NATURALGAS |
 
-These five entries are retained for later broker wiring (brent / platinum / palladium / micros / ETFs were dropped); they are not currently scanned. Direct names like `MCXGOLD` / `GOLD.NS` **do not** work on Yahoo.
+Only these five are scanned (brent / platinum / palladium / micros / ETFs dropped). Telegram uses the MCX-style labels shown above (`GOLD`, `SILVER`, `CRUDEOIL`, `COPPER`, `NATURALGAS`) via `NAMES` in `agent_core.py`; this does not make the Yahoo prices an MCX INR feed. Direct names like `MCXGOLD` / `GOLD.NS` **do not** work on Yahoo.
 
-`INCLUDE_COMMODITIES` defaults to `false`, and the live workflow explicitly sets it to `false`; scheduled scans therefore remain equities-only. The manual `commodities_only` input is retained for future broker-feed wiring, but no evening commodity cron jobs are scheduled. Equity-only runs stay at 09:15–15:30.
+Enable in the scanner with `INCLUDE_COMMODITIES=true` (merges `commodities.txt`). When any `=F` futures are loaded, session defaults widen to **09:00–23:30 IST** (approx. MCX hours) unless you override `SESSION_START` / `SESSION_END`. Equity-only runs stay at 09:15–15:30.
+
+**Evening schedule (GitHub Actions):** after NSE close, two **commodities-only** loops keep scanning through the MCX evening window (~23:30 IST):
+| Cron (UTC) | Starts (IST) | `LOOP_UNTIL` | Mode |
+|---|---|---|---|
+| `20 10 * * 1-5` | ~15:50 | 19:47 | `COMMODITIES_ONLY=true` |
+| `20 14 * * 1-5` | ~19:50 | 23:32 | `COMMODITIES_ONLY=true` |
+| `10 18 * * 1-5` | ~23:40 | — | EOD summary |
+
+`COMMODITIES_ONLY=true` loads only `commodities.txt` (skips the 210-symbol equity list outside cash hours). Manual evening: *Run workflow* → **commodities_only** + **loop_until** = `23:32`.
 
 ## Settings (env vars in `scanner.yml`, or flags in `backtest.py`)
 | Pine input | Env var | Backtest flag | Default |
@@ -152,7 +163,7 @@ Any always-on computer or server with Python 3.10+ works:
 ```
 pip install -r requirements.txt
 export TELEGRAM_BOT_TOKEN=xxxx TELEGRAM_CHAT_ID=xxxx
-python loop.py          # scans every 5m candle close until session end (+2m); start each morning (or set LOOP_UNTIL)
+python loop.py          # scans every 5m candle close until session end (+2m); start each morning (or set LOOP_UNTIL / COMMODITIES_ONLY)
 python backtest.py --compare --telegram
 ```
 `state.json` (de-duplication) is kept in the working folder.
