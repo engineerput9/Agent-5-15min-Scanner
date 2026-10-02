@@ -441,39 +441,66 @@ def todays_entries(d: pd.DataFrame, p: Params, today: str) -> pd.DataFrame:
 # ----------------------------------------------------------------------------
 # Telegram
 # ----------------------------------------------------------------------------
+def _telegram_chat_ids(chat_id: str | None = None) -> list[str]:
+    """Primary TELEGRAM_CHAT_ID (comma-ok) plus optional TELEGRAM_CHAT_ID_2 / TELEGRAM_CHAT_IDS."""
+    parts: list[str] = []
+    raw = chat_id if chat_id is not None else os.getenv("TELEGRAM_CHAT_ID", "")
+    parts.extend(x.strip() for x in str(raw).split(",") if x.strip())
+    for key in ("TELEGRAM_CHAT_ID_2", "TELEGRAM_CHAT_IDS"):
+        extra = os.getenv(key, "")
+        if extra:
+            parts.extend(x.strip() for x in extra.split(",") if x.strip())
+    # de-dupe, keep order
+    seen: set[str] = set()
+    out: list[str] = []
+    for c in parts:
+        if c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
 def tg_send(text: str, token: str | None = None, chat_id: str | None = None) -> bool:
     token = token or os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
-    if not token or not chat_id:
+    ids = _telegram_chat_ids(chat_id)
+    if not token or not ids:
         print("Telegram credentials missing (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)")
         return False
-    r = requests.post(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        json={"chat_id": chat_id, "text": text[:4000], "parse_mode": "HTML",
-              "disable_web_page_preview": True},
-        timeout=20,
-    )
-    if not r.ok:
-        print("Telegram error:", r.text)
-    return r.ok
+    ok_any = False
+    for cid in ids:
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": cid, "text": text[:4000], "parse_mode": "HTML",
+                  "disable_web_page_preview": True},
+            timeout=20,
+        )
+        if not r.ok:
+            print(f"Telegram error ({cid}):", r.text)
+        else:
+            ok_any = True
+    return ok_any
 
 
 def tg_send_file(path: str, caption: str = "", token: str | None = None, chat_id: str | None = None) -> bool:
     token = token or os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
-    if not token or not chat_id:
+    ids = _telegram_chat_ids(chat_id)
+    if not token or not ids:
         return False
     method = "sendPhoto" if path.lower().endswith((".png", ".jpg", ".jpeg")) else "sendDocument"
     field = "photo" if method == "sendPhoto" else "document"
-    with open(path, "rb") as fh:
-        r = requests.post(
-            f"https://api.telegram.org/bot{token}/{method}",
-            data={"chat_id": chat_id, "caption": caption[:1000]},
-            files={field: fh}, timeout=60,
-        )
-    if not r.ok:
-        print("Telegram error:", r.text)
-    return r.ok
+    ok_any = False
+    for cid in ids:
+        with open(path, "rb") as fh:
+            r = requests.post(
+                f"https://api.telegram.org/bot{token}/{method}",
+                data={"chat_id": cid, "caption": caption[:1000]},
+                files={field: fh}, timeout=60,
+            )
+        if not r.ok:
+            print(f"Telegram error ({cid}):", r.text)
+        else:
+            ok_any = True
+    return ok_any
 
 
 def format_signal(sym: str, side: int, ts: pd.Timestamp, entry: float, sl: float,
