@@ -441,35 +441,43 @@ def todays_entries(d: pd.DataFrame, p: Params, today: str) -> pd.DataFrame:
 # ----------------------------------------------------------------------------
 # Telegram
 # ----------------------------------------------------------------------------
-def _telegram_chat_ids(chat_id: str | None = None) -> list[str]:
-    """Primary TELEGRAM_CHAT_ID (comma-ok) plus optional TELEGRAM_CHAT_ID_2 / TELEGRAM_CHAT_IDS."""
-    parts: list[str] = []
+def _telegram_destinations(token: str | None = None, chat_id: str | None = None) -> list[tuple[str, str]]:
+    """(bot_token, chat_id) pairs. Primary token + chats; optional second bot pair."""
+    dests: list[tuple[str, str]] = []
+    tok1 = token or os.getenv("TELEGRAM_BOT_TOKEN") or ""
+    chats: list[str] = []
     raw = chat_id if chat_id is not None else os.getenv("TELEGRAM_CHAT_ID", "")
-    parts.extend(x.strip() for x in str(raw).split(",") if x.strip())
-    for key in ("TELEGRAM_CHAT_ID_2", "TELEGRAM_CHAT_IDS"):
-        extra = os.getenv(key, "")
-        if extra:
-            parts.extend(x.strip() for x in extra.split(",") if x.strip())
-    # de-dupe, keep order
-    seen: set[str] = set()
-    out: list[str] = []
-    for c in parts:
-        if c not in seen:
-            seen.add(c)
-            out.append(c)
-    return out
+    chats.extend(x.strip() for x in str(raw).split(",") if x.strip())
+    extra = os.getenv("TELEGRAM_CHAT_IDS", "")
+    if extra:
+        chats.extend(x.strip() for x in extra.split(",") if x.strip())
+    # Same-bot second chat only when no dedicated second bot token
+    tok2 = os.getenv("TELEGRAM_BOT_TOKEN_2", "").strip()
+    chat2 = os.getenv("TELEGRAM_CHAT_ID_2", "").strip()
+    if not tok2 and chat2:
+        chats.extend(x.strip() for x in chat2.split(",") if x.strip())
+    seen_c: set[str] = set()
+    for c in chats:
+        if tok1 and c and c not in seen_c:
+            seen_c.add(c)
+            dests.append((tok1, c))
+    if tok2 and chat2:
+        for c in (x.strip() for x in chat2.split(",") if x.strip()):
+            pair = (tok2, c)
+            if pair not in dests:
+                dests.append(pair)
+    return dests
 
 
 def tg_send(text: str, token: str | None = None, chat_id: str | None = None) -> bool:
-    token = token or os.getenv("TELEGRAM_BOT_TOKEN")
-    ids = _telegram_chat_ids(chat_id)
-    if not token or not ids:
+    dests = _telegram_destinations(token, chat_id)
+    if not dests:
         print("Telegram credentials missing (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)")
         return False
     ok_any = False
-    for cid in ids:
+    for tok, cid in dests:
         r = requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
+            f"https://api.telegram.org/bot{tok}/sendMessage",
             json={"chat_id": cid, "text": text[:4000], "parse_mode": "HTML",
                   "disable_web_page_preview": True},
             timeout=20,
@@ -482,17 +490,16 @@ def tg_send(text: str, token: str | None = None, chat_id: str | None = None) -> 
 
 
 def tg_send_file(path: str, caption: str = "", token: str | None = None, chat_id: str | None = None) -> bool:
-    token = token or os.getenv("TELEGRAM_BOT_TOKEN")
-    ids = _telegram_chat_ids(chat_id)
-    if not token or not ids:
+    dests = _telegram_destinations(token, chat_id)
+    if not dests:
         return False
     method = "sendPhoto" if path.lower().endswith((".png", ".jpg", ".jpeg")) else "sendDocument"
     field = "photo" if method == "sendPhoto" else "document"
     ok_any = False
-    for cid in ids:
+    for tok, cid in dests:
         with open(path, "rb") as fh:
             r = requests.post(
-                f"https://api.telegram.org/bot{token}/{method}",
+                f"https://api.telegram.org/bot{tok}/{method}",
                 data={"chat_id": cid, "caption": caption[:1000]},
                 files={field: fh}, timeout=60,
             )
