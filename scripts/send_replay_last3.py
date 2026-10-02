@@ -1,7 +1,7 @@
 """One-shot: replay last 3 state.json alerts to all Telegram destinations."""
-import json, os, sys
+import json, sys
 sys.path.insert(0, ".")
-from agent_core import tg_send
+from agent_core import display_name, tg_send
 
 st = json.load(open("state.json"))
 rows = []
@@ -15,7 +15,7 @@ rows.sort(key=lambda r: (r["sent_at"], r["signal_ts"]), reverse=True)
 last = rows[:3]
 lines = ["🧪 <b>Last 3 alerts replay</b> (GitHub → both bots verify)\n"]
 for i, r in enumerate(last, 1):
-    name = r["sym"].replace(".NS", "")
+    name = display_name(r["sym"])
     icon, word = ("🟢", "BUY") if r["side"] == "LONG" else ("🔴", "SELL")
     lines.append(
         f"{i}. {icon} {word} <b>{name}</b>\n"
@@ -23,5 +23,5 @@ for i, r in enumerate(last, 1):
         f"   sent {r['sent_at'][:16].replace('T', ' ')} IST"
     )
 ok = tg_send("\n".join(lines))
-print("replay_sent", ok, "n", len(last))
+print("replay_sent", ok, "n", len(last), "names", [display_name(r["sym"]) for r in last])
 sys.exit(0 if ok else 1)
