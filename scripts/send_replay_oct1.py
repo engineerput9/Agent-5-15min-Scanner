@@ -6,6 +6,7 @@ both Telegram destinations. Credentials come only from GitHub Actions secrets.
 from __future__ import annotations
 
 import os
+import sys
 import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -13,6 +14,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import requests
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from agent_core import Params, calc_qty, format_signal
 
 CAPITAL = 100_000.0
