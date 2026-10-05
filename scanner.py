@@ -37,6 +37,8 @@ def load_state(today: str) -> dict:
     out = {"sent": {k: v for k, v in sent.items() if k.split("|")[1][:10] >= cutoff}}
     if "eod_sent" in st:
         out["eod_sent"] = st["eod_sent"]
+    if "last_heartbeat_hour" in st:
+        out["last_heartbeat_hour"] = st["last_heartbeat_hour"]
     return out
 
 
@@ -132,10 +134,14 @@ def main() -> None:
         except Exception as exc:  # noqa: BLE001
             print(f"  {sym}: error {exc}")
 
+    # Heartbeat at most once per clock hour (IST), not every 5-minute scan
+    if env_bool("HEARTBEAT"):
+        hb_hour = now.strftime("%Y-%m-%d %H")
+        if state.get("last_heartbeat_hour") != hb_hour:
+            if tg_send(f"💓 Scan OK {now:%H:%M} IST • {len(data)}/{len(symbols)} symbols • {sent} new signal(s)"):
+                state["last_heartbeat_hour"] = hb_hour
     save_state(state)
     print(f"done - {sent} alert(s) sent")
-    if env_bool("HEARTBEAT"):
-        tg_send(f"💓 Scan OK {now:%H:%M} IST • {len(data)}/{len(symbols)} symbols • {sent} new signal(s)")
 
 
 if __name__ == "__main__":
