@@ -31,9 +31,10 @@ on:
         type: boolean
         default: false
       eod_summary:
-        description: "Only run the end-of-day Telegram summary (today's signals / win rate / PnL)"
-        type: boolean
-        default: false
+        description: "Only run the EOD Telegram summary: true = full (NSE + MCX), nse = NSE equities/indices only"
+        type: choice
+        options: ["false", "true", "nse"]
+        default: "false"
       eod_dry_run:
         description: "Format EOD summary but do not send Telegram (use with eod_summary)"
         type: boolean
@@ -61,7 +62,9 @@ permissions:
   contents: write
 
 concurrency:
-  group: agent-scanner
+  # NSE-only EOD (eod_summary=nse) runs in its own lane so it is not stuck behind the
+  # long MCX evening loop; it does not commit state.json (see save step).
+  group: ${{ inputs.eod_summary == 'nse' && 'agent-scanner-eod-nse' || 'agent-scanner' }}
   cancel-in-progress: false
 
 jobs:
@@ -88,6 +91,7 @@ jobs:
           TEST_MODE: ${{ inputs.test_mode }}
           FORCE_RUN: ${{ inputs.force_run }}
           EOD_SUMMARY: ${{ inputs.eod_summary }}
+          EOD_SCOPE: ${{ inputs.eod_summary == 'nse' && 'nse' || 'all' }}
           EOD_DRY_RUN: ${{ inputs.eod_dry_run }}
           BASE_MIN: ${{ inputs.base_min }}
           HTF_MIN: ${{ inputs.htf_min }}
@@ -118,7 +122,7 @@ jobs:
         run: |
           set -e
           # Daily EOD: scheduled cron 10 18 * * 1-5 (~23:40 IST, after MCX) or manual eod_summary
-          if [ "$SCHEDULE_CRON" = "10 18 * * 1-5" ] || [ "$EOD_SUMMARY" = "true" ]; then
+          if [ "$SCHEDULE_CRON" = "10 18 * * 1-5" ] || [ "$EOD_SUMMARY" = "true" ] || [ "$EOD_SUMMARY" = "nse" ]; then
             python eod_summary.py
           elif [ -n "$LOOP_UNTIL" ]; then
             python loop.py
@@ -127,7 +131,7 @@ jobs:
           fi
 
       - name: Save de-duplication state
-        if: always()
+        if: always() && inputs.eod_summary != 'nse'
         run: |
           git config user.name "agent-scanner-bot"
           git config user.email "agent-scanner-bot@users.noreply.github.com"

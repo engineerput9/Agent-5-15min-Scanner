@@ -230,7 +230,7 @@ def _asset_block(title: str, rows: list[dict], limit: int) -> list[str]:
 
 
 def format_eod(today: str, trades: list[dict], p: Params, capital: float, bt: BT,
-               max_each: int = 10) -> str:
+               max_each: int = 10, scope: str = "all") -> str:
     """Build EOD Telegram HTML: overall + by-trigger, then Equities vs MCX sections."""
     n = len(trades)
     priced = [t for t in trades if t.get("_priced", True) and t.get("outcome") != "NO_FILL_DATA"]
@@ -262,7 +262,7 @@ def format_eod(today: str, trades: list[dict], p: Params, capital: float, bt: BT
     per_class = max(3, limit // 2) if (eq_priced and co_priced) else limit
 
     lines = [
-        f"📊 <b>EOD Summary – {today}</b>",
+        f"📊 <b>{'NSE ' if scope == 'nse' else ''}EOD Summary – {today}</b>",
         f"<i>{p.base_min}m / HTF {p.htf_min}m • RR {p.rr1:g} (TP1 only) • "
         f"risk {p.risk_pct:g}% • ₹{capital:,.0f}</i>",
         "",
@@ -288,8 +288,9 @@ def format_eod(today: str, trades: list[dict], p: Params, capital: float, bt: BT
     # Equities (main) and MCX / Commodities as distinct blocks
     lines.append("")
     lines.extend(_asset_block("📈 Equities", eq_priced, per_class))
-    lines.append("")
-    lines.extend(_asset_block("🛢️ MCX / Commodities", co_priced, per_class))
+    if scope != "nse":
+        lines.append("")
+        lines.extend(_asset_block("🛢️ MCX / Commodities", co_priced, per_class))
 
     lines += [
         "",
@@ -305,17 +306,21 @@ def format_eod(today: str, trades: list[dict], p: Params, capital: float, bt: BT
 
     msg = "\n".join(lines)
     if len(msg) > 3900 and limit > 3:
-        return format_eod(today, trades, p, capital, bt, max_each=limit - 1)
+        return format_eod(today, trades, p, capital, bt, max_each=limit - 1, scope=scope)
     return msg
 
 
 
-def already_sent(state: dict, today: str) -> bool:
-    return state.get("eod_sent") == today
+def _sent_key(scope: str) -> str:
+    return "eod_nse_sent" if scope == "nse" else "eod_sent"
 
 
-def mark_sent(state: dict, today: str) -> None:
-    state["eod_sent"] = today
+def already_sent(state: dict, today: str, scope: str = "all") -> bool:
+    return state.get(_sent_key(scope)) == today
+
+
+def mark_sent(state: dict, today: str, scope: str = "all") -> None:
+    state[_sent_key(scope)] = today
 
 
 def run(dry_run: bool = False, force: bool = False) -> int:
@@ -328,9 +333,14 @@ def run(dry_run: bool = False, force: bool = False) -> int:
     if day_override:
         today = day_override
 
+    # EOD_SCOPE=nse: NSE equities/indices only (post 15:30 close); default all (NSE + MCX)
+    scope = (os.getenv("EOD_SCOPE") or "all").strip().lower()
+    if scope != "nse":
+        scope = "all"
+
     state = load_state(today)
-    if not force and not dry_run and already_sent(state, today):
-        print(f"EOD summary already sent for {today}, skipping")
+    if not force and not dry_run and already_sent(state, today, scope):
+        print(f"EOD ({scope}) summary already sent for {today}, skipping")
         return 0
 
     if now.weekday() >= 5 and not force and not day_override:
@@ -347,11 +357,13 @@ def run(dry_run: bool = False, force: bool = False) -> int:
     )
 
     sent = todays_sent_keys(state, today)
+    if scope == "nse":
+        sent = [x for x in sent if _asset_class(x[0]) == "equity"]
     print(f"{now:%Y-%m-%d %H:%M} IST | EOD for {today} | {len(sent)} sent alert(s)")
 
     if not sent:
         msg = (
-            f"📊 <b>EOD Summary – {today}</b>\n"
+            f"📊 <b>{'NSE ' if scope == 'nse' else ''}EOD Summary – {today}</b>\n"
             f"<i>Agent Confluence {p.base_min}m / HTF {p.htf_min}m</i>\n\n"
             f"Signals sent: <b>0</b>\n"
             f"Win rate: —\n"
@@ -365,7 +377,7 @@ def run(dry_run: bool = False, force: bool = False) -> int:
         if n_bf:
             print(f"EOD: backfilled entry_type on {n_bf} state alert(s)")
             save_state(state)
-        msg = format_eod(today, trades, p, capital, bt)
+        msg = format_eod(today, trades, p, capital, bt, scope=scope)
 
     print("--- message preview ---")
     print(msg.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", ""))
@@ -377,7 +389,7 @@ def run(dry_run: bool = False, force: bool = False) -> int:
 
     ok = tg_send(msg)
     if ok:
-        mark_sent(state, today)
+        mark_sent(state, today, scope)
         save_state(state)
         print("EOD summary sent")
         return 0

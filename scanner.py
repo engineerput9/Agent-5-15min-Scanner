@@ -37,6 +37,8 @@ def load_state(today: str) -> dict:
     out = {"sent": {k: v for k, v in sent.items() if k.split("|")[1][:10] >= cutoff}}
     if "eod_sent" in st:
         out["eod_sent"] = st["eod_sent"]
+    if "eod_nse_sent" in st:
+        out["eod_nse_sent"] = st["eod_nse_sent"]
     if "last_heartbeat_hour" in st:
         out["last_heartbeat_hour"] = st["last_heartbeat_hour"]
     return out
