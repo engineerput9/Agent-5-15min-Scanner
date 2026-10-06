@@ -47,4 +47,11 @@ jobs:
             exit 0
           fi
           echo "dispatching Agent Scanner (auto_session)"
-          gh workflow run scanner.yml --ref "${GITHUB_REF_NAME}" -f auto_session=true
+          code=$(curl -sS -o /tmp/dispatch.out -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/scanner.yml/dispatches" \
+            -d "{\"ref\":\"${GITHUB_REF_NAME}\",\"inputs\":{\"auto_session\":\"true\"}}")
+          echo "dispatch -> ${code}"
+          cat /tmp/dispatch.out || true
+          test "$code" = "204"
