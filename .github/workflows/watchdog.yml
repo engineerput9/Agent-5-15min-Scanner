@@ -1,0 +1,48 @@
+name: Agent Scanner Watchdog
+
+# Restarts the scanner chain if GitHub dropped a cron or a handoff failed.
+# Does not scan itself: if no Agent Scanner run is queued/running and the IST
+# session is open, it dispatches scanner.yml with auto_session=true.
+on:
+  schedule:
+    - cron: "*/15 3-17 * * 1-5"       # 08:30–23:15 IST, every 15 min
+    - cron: "5,20,35,50 18 * * 1-5"   # 23:35–00:20 IST, catch a missed EOD
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  kick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Dispatch scanner if the session is idle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          python session_plan.py --json > /tmp/plan.json
+          cat /tmp/plan.json
+          mode=$(python -c 'import json; print(json.load(open("/tmp/plan.json"))["mode"])')
+          if [ "$mode" = "idle" ]; then
+            echo "outside session — not dispatching"
+            exit 0
+          fi
+          active=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow scanner.yml --limit 30 \
+            --json status \
+            --jq '[.[] | select(.status=="queued" or .status=="in_progress" or .status=="waiting" or .status=="requested" or .status=="pending")] | length')
+          echo "active scanner runs: $active"
+          if [ "$active" != "0" ]; then
+            echo "scanner already running or queued — not dispatching"
+            exit 0
+          fi
+          echo "dispatching Agent Scanner (auto_session)"
+          gh workflow run scanner.yml --ref "${GITHUB_REF_NAME}" -f auto_session=true

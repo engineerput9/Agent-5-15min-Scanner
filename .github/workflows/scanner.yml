@@ -1,25 +1,26 @@
 name: Agent Scanner
 
-# Scheduled sessions (Mon–Fri, times IST = UTC+5:30):
-#   09:00 → loop until 12:32   equities + commodities
-#   12:20 → loop until 15:32   equities + commodities (NSE close)
-#   15:50 → loop until 19:47   commodities only (MCX evening, part 1)
-#   19:50 → loop until 23:32   commodities only (MCX evening, part 2 → ~23:30)
-#   23:40                      EOD Telegram summary (after MCX evening)
+# Mon–Fri IST coverage. GitHub crons are best-effort and often late, so a scheduled
+# start does not trust its cron id: session_plan.py picks the open window from the
+# clock. Each segment then dispatches the next one (workflow_dispatch), and
+# watchdog.yml restarts the chain if a start is missed.
 #
-# Why split evening: GitHub Actions jobs cap ~6h (timeout-minutes: 355). One loop from
-# equity open through 23:30 would exceed that; two post-close commodities-only jobs stay reliable.
-# Long-running loop.py (scan ~25s after each 5m close) is far more reliable than a "*/5" cron.
-# Afternoon loop does not post EOD when session_end is 23:30 (commodities); EOD cron + end of
-# the last evening loop do (state.json "eod_sent" dedupes).
-# Manual: single scan, test_mode, eod_summary, or set loop_until (e.g. 23:32) for a live loop.
+# Segments (job cap is ~6h, so the day is chained, not one job):
+#   08:55–12:32  equities + commodities
+#   12:32–15:32  equities + commodities (NSE close)
+#   15:32–19:47  commodities only
+#   19:47–23:32  commodities only (MCX evening → ~23:30)
+#   23:32–23:55  EOD Telegram summary (also cron 23:40; state.json eod_sent dedupes)
+#
+# Manual: single scan, test_mode, eod_summary, or loop_until (e.g. 15:32 / 23:32).
+# Tick auto_session to start the chain from the current IST window.
 on:
   schedule:
-    - cron: "30 3 * * 1-5"
-    - cron: "50 6 * * 1-5"
-    - cron: "20 10 * * 1-5"
-    - cron: "20 14 * * 1-5"
-    - cron: "10 18 * * 1-5"
+    - cron: "30 3 * * 1-5"    # 09:00 IST backup start
+    - cron: "50 6 * * 1-5"    # 12:20 IST backup handoff
+    - cron: "20 10 * * 1-5"   # 15:50 IST backup handoff
+    - cron: "20 14 * * 1-5"   # 19:50 IST backup handoff
+    - cron: "10 18 * * 1-5"   # 23:40 IST EOD backup
   workflow_dispatch:
     inputs:
       test_mode:
@@ -46,6 +47,10 @@ on:
         description: "Scan only commodities.txt (MCX evening / manual evening loops)"
         type: boolean
         default: false
+      auto_session:
+        description: "Pick the open IST window and chain the next segment (watchdog / recovery)"
+        type: boolean
+        default: false
       base_min:
         description: "Chart timeframe in minutes (blank = 5)"
         required: false
@@ -60,6 +65,7 @@ on:
         required: false
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   # NSE-only EOD (eod_summary=nse) runs in its own lane so it is not stuck behind the
@@ -99,10 +105,10 @@ jobs:
           ENTRY_AFTER: ${{ inputs.entry_after }}
           HEARTBEAT: "true"
           INCLUDE_COMMODITIES: "true"
-          # Evening crons (and manual commodities_only) skip the 210-symbol equity list
-          COMMODITIES_ONLY: ${{ (github.event_name == 'schedule' && (github.event.schedule == '20 10 * * 1-5' || github.event.schedule == '20 14 * * 1-5')) && 'true' || (inputs.commodities_only == true && 'true' || 'false') }}
-          # Morning 12:32 | afternoon 15:32 | evening A 19:47 | evening B 23:32 | EOD cron empty
-          LOOP_UNTIL: ${{ github.event_name == 'schedule' && (github.event.schedule == '30 3 * * 1-5' && '12:32' || github.event.schedule == '50 6 * * 1-5' && '15:32' || github.event.schedule == '20 10 * * 1-5' && '19:47' || github.event.schedule == '20 14 * * 1-5' && '23:32' || '') || inputs.loop_until }}
+          MANUAL_LOOP_UNTIL: ${{ inputs.loop_until }}
+          MANUAL_COMMODITIES_ONLY: ${{ inputs.commodities_only }}
+          # schedule, or a watchdog/chain dispatch: choose the window from the clock
+          AUTO_SESSION: ${{ github.event_name == 'schedule' && 'true' || inputs.auto_session }}
           SCHEDULE_CRON: ${{ github.event.schedule }}
           # ---- optional tuning (uncomment to change) ----
           # CAPITAL: "100000"       # used for the quantity shown in alerts + EOD PnL
@@ -121,14 +127,57 @@ jobs:
           # SLIPPAGE_TICKS: "1"
         run: |
           set -e
-          # Daily EOD: scheduled cron 10 18 * * 1-5 (~23:40 IST, after MCX) or manual eod_summary
-          if [ "$SCHEDULE_CRON" = "10 18 * * 1-5" ] || [ "$EOD_SUMMARY" = "true" ] || [ "$EOD_SUMMARY" = "nse" ]; then
-            python eod_summary.py
-          elif [ -n "$LOOP_UNTIL" ]; then
-            python loop.py
-          else
+          if [ "$TEST_MODE" = "true" ]; then
             python scanner.py
+            exit 0
           fi
+          if [ "$EOD_SUMMARY" = "true" ] || [ "$EOD_SUMMARY" = "nse" ]; then
+            python eod_summary.py
+            exit 0
+          fi
+          # Manual loop_until is a one-shot (no chain) unless auto_session is set.
+          if [ "$AUTO_SESSION" != "true" ] && [ -n "$MANUAL_LOOP_UNTIL" ]; then
+            export LOOP_UNTIL="$MANUAL_LOOP_UNTIL"
+            export COMMODITIES_ONLY="$MANUAL_COMMODITIES_ONLY"
+            python loop.py
+            exit 0
+          fi
+          if [ "$AUTO_SESSION" != "true" ]; then
+            export COMMODITIES_ONLY="$MANUAL_COMMODITIES_ONLY"
+            python scanner.py
+            exit 0
+          fi
+          python session_plan.py --write .session_plan.env
+          set -a
+          # shellcheck disable=SC1091
+          . ./.session_plan.env
+          set +a
+          echo "auto session: MODE=$MODE LOOP_UNTIL=${LOOP_UNTIL:-} COMMODITIES_ONLY=$COMMODITIES_ONLY CHAIN_NEXT=$CHAIN_NEXT"
+          if [ "$MODE" = "loop" ]; then
+            python loop.py
+          elif [ "$MODE" = "eod" ]; then
+            python eod_summary.py
+          else
+            echo "outside market session, nothing to do"
+          fi
+
+      - name: Chain next session
+        if: always() && inputs.eod_summary != 'nse' && inputs.test_mode != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f .session_plan.env ]; then
+            echo "no session plan (manual / test / eod input) — not chaining"
+            exit 0
+          fi
+          # shellcheck disable=SC1091
+          . ./.session_plan.env
+          if [ "$CHAIN_NEXT" != "true" ]; then
+            echo "chain not requested (MODE=${MODE:-})"
+            exit 0
+          fi
+          echo "dispatching next session"
+          gh workflow run scanner.yml --ref "${GITHUB_REF_NAME}" -f auto_session=true
 
       - name: Save de-duplication state
         if: always() && inputs.eod_summary != 'nse'

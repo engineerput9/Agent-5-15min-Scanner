@@ -23,9 +23,11 @@ Python port of your Pine strategy **"Agent Confluence Backtest"**.
 | `commodities.txt` | MCX-relevant Yahoo futures proxies (gold, silver, crude, …) |
 | `Agent_Confluence_Indicator.pine` | TradingView indicator (entry, SL, TP1 labels + alerts) |
 | `requirements.txt` | Python packages |
-| `loop.py` | Runs the scanner right after every 5m candle close until a stop time; posts EOD summary when the afternoon session ends |
+| `loop.py` | Runs the scanner right after every 5m candle close until a stop time; posts EOD summary when that stop is at/after session end |
+| `session_plan.py` | Picks the open IST window (so a late GitHub cron still scans) and whether to chain the next segment |
 | `eod_summary.py` | End-of-day Telegram summary (signal count, win rate, PnL) for alerts sent that day |
-| `.github/workflows/scanner.yml` | Live loops (morning + afternoon equities/commodities; evening commodities-only through ~23:30 IST) + daily EOD ~23:40 IST |
+| `.github/workflows/scanner.yml` | Live chain: equities + commodities 09:00–15:32, commodities-only through ~23:30 IST, then EOD. Each segment dispatches the next |
+| `.github/workflows/watchdog.yml` | Every 15 min on weekdays, starts the chain if no scanner run is already active |
 | `.github/workflows/backtest.yml` | Manual backtest run |
 
 ## Setup, step by step (phone-friendly)
@@ -38,12 +40,13 @@ Python port of your Pine strategy **"Agent Confluence Backtest"**.
    If your old workflow already used other secret names, either keep them and edit the two `env:` lines in `scanner.yml`, or add these names.
 4. **Allow commits**: *Settings → Actions → General → Workflow permissions → Read and write permissions → Save*. (Needed so the bot can save `state.json`, which prevents duplicate alerts.)
 5. **Test Telegram**: *Actions → Agent Scanner → Run workflow*, tick **test_mode**, Run. You should get a "✅ Agent Scanner test" message.
-6. **Go live**: nothing more to do. Scheduled Mon–Fri sessions (all scan ~25 s after each 5m candle close):
-   - **09:00 IST** → loop until **12:32** (equities + commodities)
-   - **12:20 IST** → loop until **15:32** (equities + commodities, through NSE close)
-   - **15:50 IST** → loop until **19:47** (**commodities only**, MCX evening part 1)
-   - **19:50 IST** → loop until **23:32** (**commodities only**, MCX evening part 2 through ~23:30)
-   Evening is split into two jobs because GitHub Actions caps a single job at ~6 hours. If a start is missed, run the workflow by hand with **loop_until** (e.g. `15:32` or `23:32`); tick **commodities_only** for an evening-style run.
+6. **Go live**: nothing more to do. On weekdays the scanner stays up by itself:
+   - **09:00 IST** backup cron starts the chain (watchdog also starts it if that cron is late).
+   - **08:55–12:32** equities + commodities, then the job dispatches the next segment.
+   - **12:32–15:32** equities + commodities (through NSE close), then handoff.
+   - **15:32–19:47** commodities only, then handoff.
+   - **19:47–23:32** commodities only (MCX evening through ~23:30), then EOD.
+   A single Actions job cannot run 09:00–23:30 (6 hour cap), so the day is chained. `watchdog.yml` checks every 15 minutes and restarts the chain if a handoff or cron was missed. Manual recovery: *Run workflow* → tick **auto_session**. One-shot: set **loop_until** (and **commodities_only** for an evening-style run).
 7. **EOD summary**: every trading day around **23:40 IST** (GitHub cron `10 18 * * 1-5` UTC, after the MCX evening window) the workflow runs `eod_summary.py` and Telegrams a day summary: signals sent, win rate, and net PnL. The last evening loop also posts EOD when it finishes (~23:32); `state.json` `eod_sent` prevents duplicates. Manual: *Run workflow* → tick **eod_summary** (optional **eod_dry_run**).
 8. **Backtest**: *Actions → Agent Backtest → Run workflow*. Leave defaults (compare = on, telegram = on). Results arrive on Telegram (summary, chart, trades.csv) and under the run's **Artifacts** (`trades.csv`, `report.md`, `summary.json`, `equity.png`, `compare.csv`).
 
@@ -100,14 +103,17 @@ Only these five are scanned (brent / platinum / palladium / micros / ETFs droppe
 
 Enable in the scanner with `INCLUDE_COMMODITIES=true` (merges `commodities.txt`). When any `=F` futures are loaded, session defaults widen to **09:00–23:30 IST** (approx. MCX hours) unless you override `SESSION_START` / `SESSION_END`. Equity-only runs stay at 09:15–15:30.
 
-**Evening schedule (GitHub Actions):** after NSE close, two **commodities-only** loops keep scanning through the MCX evening window (~23:30 IST):
-| Cron (UTC) | Starts (IST) | `LOOP_UNTIL` | Mode |
-|---|---|---|---|
-| `20 10 * * 1-5` | ~15:50 | 19:47 | `COMMODITIES_ONLY=true` |
-| `20 14 * * 1-5` | ~19:50 | 23:32 | `COMMODITIES_ONLY=true` |
-| `10 18 * * 1-5` | ~23:40 | — | EOD summary |
+**Session chain (GitHub Actions):** `session_plan.py` chooses the window from the IST clock, so a delayed cron still scans the open session instead of exiting. The running job dispatches the next segment; `watchdog.yml` (every 15 min, weekdays) dispatches `auto_session` if nothing is queued or running.
 
-`COMMODITIES_ONLY=true` loads only `commodities.txt` (skips the 210-symbol equity list outside cash hours). Manual evening: *Run workflow* → **commodities_only** + **loop_until** = `23:32`.
+| IST window | What runs |
+|---|---|
+| 08:55–12:32 | equities + commodities |
+| 12:32–15:32 | equities + commodities (NSE close) |
+| 15:32–19:47 | commodities only |
+| 19:47–23:32 | commodities only (MCX evening) |
+| 23:32–23:55 | EOD summary (`10 18 * * 1-5` cron is the backup) |
+
+`COMMODITIES_ONLY=true` loads only `commodities.txt` (skips the 210-symbol equity list outside cash hours). Manual evening: *Run workflow* → **commodities_only** + **loop_until** = `23:32`, or tick **auto_session** to join the chain.
 
 ## Settings (env vars in `scanner.yml`, or flags in `backtest.py`)
 | Pine input | Env var | Backtest flag | Default |
@@ -150,8 +156,8 @@ Report contents: win rate, % hitting SL / TP1 / EOD, outcome mix (SL, TP1, TP1 t
 - Observation levels only, not investment advice.
 
 ## If alerts stop arriving on schedule
-1. Open *Actions → Agent Scanner*. Are there runs whose trigger says **schedule** for today? If not, GitHub skipped them.
-2. **Private repo + free plan = 2,000 Actions minutes per month.** Scanning every 5 minutes all day uses far more than that (several thousand minutes), so scheduled runs stop once the allowance is used. Check *Settings → Billing → Usage*.
+1. Open *Actions → Agent Scanner*. A weekday session should show a long **in progress** run (event `schedule` or `workflow_dispatch`). *Agent Scanner Watchdog* should have a run every 15 minutes; if the scanner is idle inside the session window, the next watchdog run starts it.
+2. **Private repo + free plan = 2,000 Actions minutes per month.** A full chained day uses a few hundred minutes, so a private free repo can still run out. Check *Settings → Billing → Usage*.
 3. Fixes: make the repository **public** (Actions minutes are then free and secrets stay hidden, but your code and symbol list become visible), or run `loop.py` on any always-on computer / cloud VM:
    ```
    pip install -r requirements.txt
