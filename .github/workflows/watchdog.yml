@@ -5,8 +5,10 @@ name: Agent Scanner Watchdog
 # session is open, it dispatches scanner.yml with auto_session=true.
 on:
   schedule:
-    - cron: "*/15 3-17 * * 1-5"       # 08:30–23:15 IST, every 15 min
-    - cron: "5,20,35,50 18 * * 1-5"   # 23:35–00:20 IST, catch a missed EOD
+    # Every 5 min across the cash + MCX window. A run only dispatches if the
+    # scanner is idle, so this stays cheap and restarts a dropped chain quickly.
+    - cron: "*/5 3-17 * * 1-5"        # 08:30–23:25 IST
+    - cron: "0,5,10,20,30,40,50 18 * * 1-5"  # through the 23:40 IST EOD backup
   workflow_dispatch:
 
 permissions:

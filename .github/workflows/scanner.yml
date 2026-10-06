@@ -110,6 +110,7 @@ jobs:
           # schedule, or a watchdog/chain dispatch: choose the window from the clock
           AUTO_SESSION: ${{ github.event_name == 'schedule' && 'true' || inputs.auto_session }}
           SCHEDULE_CRON: ${{ github.event.schedule }}
+          GH_TOKEN: ${{ github.token }}
           # ---- optional tuning (uncomment to change) ----
           # CAPITAL: "100000"       # used for the quantity shown in alerts + EOD PnL
           # RISK_PCT: "1.0"
@@ -153,7 +154,29 @@ jobs:
           . ./.session_plan.env
           set +a
           echo "auto session: MODE=$MODE LOOP_UNTIL=${LOOP_UNTIL:-} COMMODITIES_ONLY=$COMMODITIES_ONLY CHAIN_NEXT=$CHAIN_NEXT"
+          dispatch_next() {
+            # Queue the following segment now. Concurrency holds it until this job
+            # exits, so a crash still hands off. 204 = accepted.
+            local i code
+            for i in 1 2 3; do
+              code=$(curl -sS -o /tmp/dispatch.out -w "%{http_code}" -X POST \
+                -H "Authorization: Bearer ${GH_TOKEN}" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/scanner.yml/dispatches" \
+                -d "{\"ref\":\"${GITHUB_REF_NAME}\",\"inputs\":{\"auto_session\":\"true\"}}") || code="000"
+              echo "next-session dispatch attempt ${i} -> ${code}"
+              if [ "$code" = "204" ]; then
+                return 0
+              fi
+              sleep 5
+            done
+            echo "next-session dispatch failed (watchdog will retry)"
+            return 0
+          }
           if [ "$MODE" = "loop" ]; then
+            if [ "$CHAIN_NEXT" = "true" ]; then
+              dispatch_next
+            fi
             python loop.py
           elif [ "$MODE" = "eod" ]; then
             python eod_summary.py
@@ -176,8 +199,28 @@ jobs:
             echo "chain not requested (MODE=${MODE:-})"
             exit 0
           fi
-          echo "dispatching next session"
-          gh workflow run scanner.yml --ref "${GITHUB_REF_NAME}" -f auto_session=true
+          queued=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow scanner.yml --limit 20 \
+            --json status,databaseId \
+            --jq '[.[] | select(.status=="queued" or .status=="waiting" or .status=="requested" or .status=="pending")] | length')
+          echo "already queued scanner runs: ${queued}"
+          if [ "$queued" != "0" ]; then
+            echo "successor already queued"
+            exit 0
+          fi
+          for i in 1 2 3; do
+            code=$(curl -sS -o /tmp/dispatch.out -w "%{http_code}" -X POST \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/scanner.yml/dispatches" \
+              -d "{\"ref\":\"${GITHUB_REF_NAME}\",\"inputs\":{\"auto_session\":\"true\"}}") || code="000"
+            echo "end dispatch attempt ${i} -> ${code}"
+            if [ "$code" = "204" ]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "end dispatch failed; watchdog will start the next segment"
+          exit 0
 
       - name: Save de-duplication state
         if: always() && inputs.eod_summary != 'nse'
