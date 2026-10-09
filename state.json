@@ -2,6 +2,11 @@
  "eod_sent": "2026-10-09",
  "last_heartbeat_hour": "2026-10-09 09",
  "sent": {
+  "APOLLOHOSP.NS|2026-10-09T09:50:00+05:30": {
+   "entry_type": "5m flip",
+   "sent_at": "2026-10-09T09:55:25.930064+05:30",
+   "side": "LONG"
+  },
   "BAJFINANCE.NS|2026-10-07T10:50:00+05:30": {
    "entry_type": "5m flip",
    "sent_at": "2026-10-07T10:55:25.482882+05:30",
