@@ -1,6 +1,6 @@
 {
  "eod_sent": "2026-10-09",
- "last_heartbeat_hour": "2026-10-09 09",
+ "last_heartbeat_hour": "2026-10-09 10",
  "sent": {
   "APOLLOHOSP.NS|2026-10-09T09:50:00+05:30": {
    "entry_type": "5m flip",
