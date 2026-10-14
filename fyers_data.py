@@ -118,7 +118,7 @@ def fetch_one(sym: str, interval_min: int, days: int = 30):
             if not c:
                 return None
             df = pd.DataFrame(c, columns=["t", "open", "high", "low", "close", "volume"])
-            df.index = pd.to_datetime(df["t"], unit="s", utc=True).tz_convert(IST)
+            df.index = pd.DatetimeIndex(pd.to_datetime(df["t"].values, unit="s", utc=True)).tz_convert(IST)
             return df.drop(columns=["t"]).astype(float)
         msg = str((r or {}).get("message", ""))[:120] if isinstance(r, dict) else ""
         code = (r or {}).get("code") if isinstance(r, dict) else None
