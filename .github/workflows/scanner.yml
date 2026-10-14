@@ -18,9 +18,7 @@ on:
   schedule:
     - cron: "30 3 * * 1-5"    # 09:00 IST backup start
     - cron: "50 6 * * 1-5"    # 12:20 IST backup handoff
-    - cron: "20 10 * * 1-5"   # 15:50 IST backup handoff
-    - cron: "20 14 * * 1-5"   # 19:50 IST backup handoff
-    - cron: "10 18 * * 1-5"   # 23:40 IST EOD backup
+    - cron: "20 10 * * 1-5"   # 15:50 IST NSE EOD backup
   workflow_dispatch:
     inputs:
       test_mode:
@@ -104,7 +102,7 @@ jobs:
           FRESH_MIN: ${{ inputs.fresh_min }}
           ENTRY_AFTER: ${{ inputs.entry_after }}
           HEARTBEAT: "true"
-          INCLUDE_COMMODITIES: "true"
+          INCLUDE_COMMODITIES: "false"   # NSE F&O only; MCX disabled
           MANUAL_LOOP_UNTIL: ${{ inputs.loop_until }}
           MANUAL_COMMODITIES_ONLY: ${{ inputs.commodities_only }}
           # schedule, or a watchdog/chain dispatch: choose the window from the clock

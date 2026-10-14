@@ -6,9 +6,7 @@ session is open now, not exit because a hardcoded LOOP_UNTIL already passed.
 Mon–Fri (IST):
   08:55–12:32  equities + commodities
   12:32–15:32  equities + commodities (through NSE close)
-  15:32–19:47  commodities only
-  19:47–23:32  commodities only (through MCX evening)
-  23:32–23:55  EOD Telegram summary
+  15:32–16:15  NSE EOD Telegram summary (MCX scanning disabled)
 """
 from __future__ import annotations
 
@@ -26,6 +24,7 @@ H15 = 15 * 60 + 32
 H19 = 19 * 60 + 47
 H23 = 23 * 60 + 32
 EOD_END = 23 * 60 + 55
+NSE_EOD_END = 16 * 60 + 15
 
 
 def plan(now: datetime | None = None) -> dict:
@@ -39,12 +38,9 @@ def plan(now: datetime | None = None) -> dict:
         return {"mode": "loop", "loop_until": "12:32", "commodities_only": False, "chain_next": True}
     if mins < H15:
         return {"mode": "loop", "loop_until": "15:32", "commodities_only": False, "chain_next": True}
-    if mins < H19:
-        return {"mode": "loop", "loop_until": "19:47", "commodities_only": True, "chain_next": True}
-    if mins < H23:
-        return {"mode": "loop", "loop_until": "23:32", "commodities_only": True, "chain_next": True}
-    if mins < EOD_END:
-        return {"mode": "eod", "reason": "after MCX close", "chain_next": False}
+    # NSE F&O only (MCX scanning disabled): EOD summary right after NSE close
+    if mins < NSE_EOD_END:
+        return {"mode": "eod", "reason": "after NSE close", "chain_next": False}
     return {"mode": "idle", "reason": "after EOD window", "chain_next": False}
 
 
