@@ -212,6 +212,23 @@ def fetch_yf(symbol: str, interval_min: int, period: str = "30d", retries: int =
 
 def fetch_many(symbols: list[str], interval_min: int, period: str = "30d",
                chunk: int = 40, retry_single: int = 15) -> dict:
+    """Candles for many symbols. Fyers first (when FYERS_* secrets are set and
+    DATA_SOURCE != yahoo); NSE symbols Fyers misses fall back to Yahoo unless
+    DATA_FALLBACK=false. Commodities never fall back (MCX INR vs COMEX USD)."""
+    import fyers_data
+    if fyers_data.enabled():
+        days = int(str(period).rstrip("d") or 30)
+        out = {k: _clean(v) for k, v in fyers_data.fetch_many(symbols, interval_min, days).items()}
+        miss = [s for s in symbols if s not in out and not s.endswith("=F")]
+        if miss and env_bool("DATA_FALLBACK", True):
+            print(f"  yahoo fallback for {len(miss)} symbol(s): {', '.join(miss[:15])}")
+            out.update(_fetch_many_yahoo(miss, interval_min, period, chunk, retry_single))
+        return out
+    return _fetch_many_yahoo(symbols, interval_min, period, chunk, retry_single)
+
+
+def _fetch_many_yahoo(symbols: list[str], interval_min: int, period: str = "30d",
+                      chunk: int = 40, retry_single: int = 15) -> dict:
     """Batched Yahoo download (a few calls for 200+ symbols). Returns {symbol: DataFrame}."""
     import yfinance as yf
 

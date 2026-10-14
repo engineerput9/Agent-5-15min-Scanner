@@ -2,3 +2,6 @@ __pycache__/
 out/
 *.pyc
 .venv/
+.token
+logs/
+.session_plan.env
