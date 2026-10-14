@@ -23,10 +23,6 @@ on:
     - cron: "10 18 * * 1-5"   # 23:40 IST EOD backup
   workflow_dispatch:
     inputs:
-      fyers_check:
-        description: "Only test Fyers login + candle download (no Telegram, no state change)"
-        type: boolean
-        default: false
       test_mode:
         description: "Only send a Telegram test message"
         type: boolean
@@ -115,14 +111,6 @@ jobs:
           AUTO_SESSION: ${{ github.event_name == 'schedule' && 'true' || inputs.auto_session }}
           SCHEDULE_CRON: ${{ github.event.schedule }}
           GH_TOKEN: ${{ github.token }}
-          # ---- market data: Fyers (falls back to Yahoo for NSE symbols Fyers misses) ----
-          FYERS_APP_ID: ${{ secrets.FYERS_APP_ID }}
-          FYERS_SECRET_ID: ${{ secrets.FYERS_SECRET_ID }}
-          FYERS_CLIENT_ID: ${{ secrets.FYERS_CLIENT_ID }}
-          FYERS_PIN: ${{ secrets.FYERS_PIN }}
-          FYERS_TOTP_KEY: ${{ secrets.FYERS_TOTP_KEY }}
-          FYERS_CHECK: ${{ inputs.fyers_check }}
-          # DATA_SOURCE: "yahoo"    # set to switch back to Yahoo
           # ---- optional tuning (uncomment to change) ----
           # CAPITAL: "100000"       # used for the quantity shown in alerts + EOD PnL
           # RISK_PCT: "1.0"
@@ -140,10 +128,6 @@ jobs:
           # SLIPPAGE_TICKS: "1"
         run: |
           set -e
-          if [ "$FYERS_CHECK" = "true" ]; then
-            python fyers_data.py
-            exit 0
-          fi
           if [ "$TEST_MODE" = "true" ]; then
             python scanner.py
             exit 0
@@ -201,7 +185,7 @@ jobs:
           fi
 
       - name: Chain next session
-        if: always() && inputs.eod_summary != 'nse' && inputs.test_mode != true && inputs.fyers_check != true
+        if: always() && inputs.eod_summary != 'nse' && inputs.test_mode != true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -239,7 +223,7 @@ jobs:
           exit 0
 
       - name: Save de-duplication state
-        if: always() && inputs.eod_summary != 'nse' && inputs.fyers_check != true
+        if: always() && inputs.eod_summary != 'nse'
         run: |
           git config user.name "agent-scanner-bot"
           git config user.email "agent-scanner-bot@users.noreply.github.com"
