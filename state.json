@@ -1,6 +1,6 @@
 {
  "eod_sent": "2026-10-15",
- "last_heartbeat_hour": "2026-10-16 12",
+ "last_heartbeat_hour": "2026-10-16 13",
  "sent": {
   "AXISBANK.NS|2026-10-15T09:15:00+05:30": {
    "entry_type": "5m flip",
@@ -16,6 +16,11 @@
    "entry_type": "5m flip",
    "sent_at": "2026-10-14T10:20:25.634343+05:30",
    "side": "LONG"
+  },
+  "IGL.NS|2026-10-16T12:55:00+05:30": {
+   "entry_type": "5m flip",
+   "sent_at": "2026-10-16T13:00:25.146969+05:30",
+   "side": "SHORT"
   },
   "IRB.NS|2026-10-14T09:35:00+05:30": {
    "entry_type": "5m flip",
