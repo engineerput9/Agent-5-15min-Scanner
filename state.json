@@ -1,10 +1,15 @@
 {
  "eod_sent": "2026-10-16",
- "last_heartbeat_hour": "2026-10-19 09",
+ "last_heartbeat_hour": "2026-10-19 10",
  "sent": {
   "ADANIPORTS.NS|2026-10-19T09:25:00+05:30": {
    "entry_type": "5m flip",
    "sent_at": "2026-10-19T09:30:25.045512+05:30",
+   "side": "SHORT"
+  },
+  "BAJAJFINSV.NS|2026-10-19T09:55:00+05:30": {
+   "entry_type": "5m flip",
+   "sent_at": "2026-10-19T10:00:25.557667+05:30",
    "side": "SHORT"
   },
   "CROMPTON.NS|2026-10-16T14:25:00+05:30": {
@@ -26,6 +31,11 @@
    "entry_type": "5m flip",
    "sent_at": "2026-10-16T10:30:25.037793+05:30",
    "side": "LONG"
+  },
+  "MUTHOOTFIN.NS|2026-10-19T09:55:00+05:30": {
+   "entry_type": "5m flip",
+   "sent_at": "2026-10-19T10:00:25.557667+05:30",
+   "side": "SHORT"
   },
   "RELIANCE.NS|2026-10-16T09:15:00+05:30": {
    "entry_type": "5m flip",
